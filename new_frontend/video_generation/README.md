@@ -40,6 +40,7 @@ new_frontend/video_generation/
   catalog.example.json       catalog.json 的格式範例（實際的 catalog.json 在資料包內）
   toolkit_common.py          共用函式（設定檔、工作單展開、資料庫路徑）
   setup_data.py              安裝程式、接上資料
+  sync_v3_controllers.py     把 V3 opacity controller 放進資料包
   check_setup.py             自我檢查
   diagnose_speed.py          影片跑得特別慢時，找出原因
   batch_render.py            批次執行器
@@ -70,7 +71,7 @@ cd frontend_temp/new_frontend/video_generation
 
 ### 2. 下載資料包
 
-資料包放在 Hugging Face 的私人儲存庫：`https://huggingface.co/datasets/Realfit3D/tryon-garment-package`。只有組織 `Realfit3D` 的成員看得到，所以要先做下面的「第一次使用」。
+資料包放在 Hugging Face 的私人儲存庫：`https://huggingface.co/datasets/Realfit3D/tryon-garment-package`。只有組織 `Realfit3D` 的成員看得到，所以要先做下面的「第一次使用」。要使用 `--opacity-mode v3`，每件目標衣服都必須包含自己的 `opacity_controller_v3/controller.pt`。
 
 **第一次使用（每個人做一次）：**
 
@@ -84,6 +85,24 @@ cd frontend_temp/new_frontend/video_generation
 hf download Realfit3D/tryon-garment-package --repo-type dataset --local-dir /你的/data_root
 ```
 
+把本地已訓練好的 V3 controller 更新進資料包：
+
+```bash
+python sync_v3_controllers.py \
+  --data-root /你的/data_root \
+  --controller-root /你的/Gaussian_Garments_restart/output_actorshq_gg \
+  --subject-map Actor08_shirt=Actor08
+```
+
+`--subject-map` 用來處理資料包衣服名稱和訓練 subject 名稱不同的情況。確認無誤後，將更新後的資料包上傳：
+
+```bash
+hf upload Realfit3D/tryon-garment-package /你的/data_root \
+  --repo-type dataset --path-in-repo .
+```
+
+正式複製前可加 `--dry-run` 檢查對應關係；不要把整個 `output_actorshq_gg` 上傳，只同步每件衣服的 controller。
+
 資料包的結構：
 
 ```
@@ -95,6 +114,7 @@ data_root/
     stage1/cameras.json
     stage3/ckpt/net.pt
     stage3/ckpt/info.txt
+    opacity_controller_v3/controller.pt  # V3 透明度控制器
     cache/garment_dict.pkl         已處理好的衣服
     cache/source_body_fit.pkl
   motions/CMU/...                  動作檔（.npz）
@@ -128,7 +148,7 @@ cp paths.example.json paths.json
 python setup_data.py --config paths.json
 ```
 
-這一步做兩件事。第一，把 `overlay/ContourCraft/` 與 `overlay/Gaussian-Garments/` 內的程式複製進你的官方程式碼資料夾。其中 `inference.py` 是官方檔案的修改版，其餘是新增的檔案；若你的官方檔案與要複製的內容不同，原檔會先備份成 `.orig` 再覆蓋。第二，把資料包內的衣服以符號連結接到程式預期的位置：Gaussian-Garments 的 `output_root/<衣服>/`（位置由你的 `utils/defaults.py` 決定，也可在 `paths.json` 加 `gaugar_output_root` 指定），以及 `work_root/<衣服>/`。動作檔不需要連結，程式直接從 `data_root/motions/` 讀取。已存在的連結不會重複建立，已存在的實體檔案不會被覆蓋。可以重複執行。
+這一步做兩件事。第一，把 `overlay/ContourCraft/` 與 `overlay/Gaussian-Garments/` 內的程式複製進你的官方程式碼資料夾。其中 `inference.py` 是官方檔案的修改版，其餘是新增的檔案；若你的官方檔案與要複製的內容不同，原檔會先備份成 `.orig` 再覆蓋。第二，把資料包內的衣服以符號連結接到程式預期的位置：Gaussian-Garments 的 `output_root/<衣服>/`（位置由你的 `utils/defaults.py` 決定，也可在 `paths.json` 加 `gaugar_output_root` 指定），以及 `work_root/<衣服>/`。資料包內的 `opacity_controller_v3/controller.pt` 也會一起接到該衣服的模型目錄，影片即可使用 `--opacity-mode v3`。動作檔不需要連結，程式直接從 `data_root/motions/` 讀取。已存在的連結不會重複建立，已存在的實體檔案不會被覆蓋。可以重複執行。
 
 ### 5. 自我檢查
 
@@ -176,12 +196,50 @@ cp jobs.example.json my_jobs.json
 | `motions` | 動作編號清單，要出現在 `catalog.json` |
 | `frames` | **通常不用寫。** 不寫（或寫 `"auto"`）= 跑完整個動作檔，幀數由動作的長度決定（動作步數 − 10）。資料包裡的動作都已經裁成要用的長度，所以直接跑就是整個動作。需要固定長度時才寫整數 |
 | `fps` | 影片的每秒幀數 |
+| `opacities` | 選填，0 到 1 的透明度清單；預設 `[1.0]`，所以舊工作單行為不變 |
+| `opacity_mode` | 選填：`direct`（預設）、`optical_depth` 或專題的 `v3`。`v3` 的 0 與 1 是精確端點；中間值需要套裝內每件衣服各自的 controller |
+| `opacity_garments` | 選填，只調整套裝內指定的衣服，例如 `["Actor02_upper"]`；省略表示整套都調整 |
 
 網頁讓使用者選的是身高、體重「區間」，所以影片要用區間的中間值來跑。`batch_render.py` 開跑前會檢查這點，填了網頁選不到的數值（例如 170）會直接列出錯誤，不會浪費時間跑出來。
 
 **影片長度 = 動作長度。** 模擬每秒 30 步，一支影片的幀數 = 動作步數 − 10（開頭 10 格是布料落定、會被丟掉）。資料包的動作已經裁好，工具會自動算出幀數，不用自己填；`--dry-run` 會列出每支影片的幀數。只有手動填了 `frames` 且動作不夠長時才會報錯。`fps` 填 30 影片就是真實速度，填 25 會慢約 17%。
 
-每個工作會對 `heights × weights × motions` 展開成所有組合。網頁讓使用者自由搭配上身和下身，但只有「有跑過的搭配」才能選，所以每一套「下身＋上身」都要在工作單裡列出才會有影片。`jobs` 內可以放多個工作。分工有調整時，只要修改自己的工作單。
+每個工作會對 `heights × weights × motions × opacities` 展開成所有組合。網頁讓使用者自由搭配上身和下身，但只有「有跑過的搭配」才能選，所以每一套「下身＋上身」都要在工作單裡列出才會有影片。`jobs` 內可以放多個工作。分工有調整時，只要修改自己的工作單。
+
+例如要用專題 PDF 中的 V3 單調控制器產生四個透明度版本：
+
+```json
+{
+  "defaults": {
+    "fps": 25,
+    "opacities": [0.25, 0.5, 0.75, 1.0],
+    "opacity_mode": "v3"
+  },
+  "jobs": [
+    {
+      "garments": ["Actor02_lower", "Actor02_upper"],
+      "gender": "male",
+      "heights": [175],
+      "weights": [65],
+      "motions": ["137_26_t05"],
+      "opacity_garments": ["Actor02_upper"]
+    }
+  ]
+}
+```
+
+V3 controller 是依衣服訓練，不能把 Actor02_upper 的權重套給另一件衣服。上面的例子只調整 Actor02_upper，下身維持原本不透明，因此只需要 Actor02_upper 的 controller。若省略 `opacity_garments`，整套每件衣服都要有自己的 controller。權重的標準位置是 `data_root/garments/<衣服>/opacity_controller_v3/controller.pt`；也可以在 `paths.json` 加上 `"v3_controllers": {"衣服名稱": "/完整路徑/controller.pt"}`。缺權重時，`--dry-run` 會在開始耗時的模擬前直接列出問題。若只是先驗證流程，可用不需權重的 `direct` 或 `optical_depth`。
+
+目前前端介面還沒有透明度選擇器；索引會優先把 1.0 版本交給現有介面播放，所以加入透明度影片不會偷偷改掉目前展示結果。各透明度與模式已寫進 `manifest.json`，之後只需在前端加選項與篩選，不必再改影片生成格式。
+
+單獨跑一支透明度影片也可以：
+
+```bash
+python render_one_video.py --config paths.json \
+  --garments Actor02_lower Actor02_upper --gender male \
+  --height 175 --weight 65 --motion 137_26_t05 \
+  --opacity 0.5 --opacity-mode v3 --opacity-garments Actor02_upper
+```
 
 ### 7. 預估數量與時間
 
@@ -254,6 +312,8 @@ video_library/
       h170_w060/            身高 cm、體重 kg，體重補零到三位
         01_01.mp4
         01_01.json          說明檔
+        01_01__opacity_v3_0p5__target_Actor02_upper.mp4
+        01_01__opacity_v3_0p5__target_Actor02_upper.json
   manifest.json
   failed.log
 ```
@@ -271,6 +331,9 @@ video_library/
   "motion": "01_01",
   "frames": 250,
   "fps": 25,
+  "opacity": 0.5,
+  "opacity_mode": "v3",
+  "opacity_garments": ["Actor02_upper"],
   "created_at": "2026-10-30T12:00:00",
   "elapsed_seconds": 2400,
   "machine": "主機名稱",
@@ -282,7 +345,7 @@ video_library/
 
 ## 各程式的實作
 
-**`render_one_video.py`** 產生單支影片。輸入是衣服、性別、身高、體重、動作、幀數與 fps。它呼叫 `ContourCraft/run_outfit_preview_pipeline.py`，依序完成：依身高體重擬合 SMPL-X 身體、把衣服重新綁定到這個身體、布料模擬、Blender 算圖、合成 mp4。`frames` 是最後影片的幀數；模擬開頭 10 幀布料尚未穩定，會被捨棄，而軌跡長度是模擬步數 + 2，所以模擬步數是 `frames + 8`。渲染完成後程式會檢查實際幀數是否等於 `frames`，不符就視為失敗。完成後把影片和說明檔寫到資料庫對應路徑。
+**`render_one_video.py`** 產生單支影片。輸入是衣服、性別、身高、體重、動作、幀數、fps、透明度與模式。它呼叫 `ContourCraft/run_outfit_preview_pipeline.py`，依序完成：依身高體重擬合 SMPL-X 身體、把衣服重新綁定到這個身體、布料模擬、Blender 算圖、在 Gaussian 光柵化前調整每個 Gaussian 的 opacity、合成 mp4。`frames` 是最後影片的幀數；模擬開頭 10 幀布料尚未穩定，會被捨棄，而軌跡長度是模擬步數 + 2，所以模擬步數是 `frames + 8`。渲染完成後程式會檢查實際幀數是否等於 `frames`，不符就視為失敗。完成後把影片和說明檔寫到資料庫對應路徑。
 
 **`batch_render.py`** 讀工作單、展開成影片清單，逐支呼叫 `render_one_video.py`。展開後的順序先依衣服組合、再依身體（性別、身高、體重）、最後依動作排列，讓同一套衣服只做一次纏繞修正，同一個身體只擬合一次。每支開跑前先檢查說明檔，狀態為 `done` 且幀數與 fps 都和工作單相同才跳過（長度不同視為另一支影片，會重新產生）；失敗就重試；每支影片的結果都立刻寫入，所以任何時刻中斷都不會損壞已完成的部分。
 

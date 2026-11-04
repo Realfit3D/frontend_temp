@@ -8,6 +8,10 @@ video always lands at the same path no matter who renders it):
 
     <library_root>/<outfit>/<gender>/h<height>_w<weight:03d>/<motion>.mp4
     <library_root>/<outfit>/<gender>/h<height>_w<weight:03d>/<motion>.json   (sidecar)
+
+The legacy/default opacity (direct, 1.0) keeps the paths above. Explicit
+opacity variants append ``__opacity_<mode>_<value>`` to the motion name so
+they never overwrite the opaque video.
 """
 
 import itertools
@@ -23,6 +27,7 @@ from pathlib import Path
 PATH_KEYS = ["contourcraft_root", "gaugar_root", "contourcraft_python", "gaugar_python",
              "data_root", "library_root", "work_root"]
 GENDERS = ("male", "female")
+OPACITY_MODES = ("direct", "optical_depth", "v3")
 
 # Required files per garment inside the data package (relative to data_root/garments/<name>/).
 GARMENT_FILES = [
@@ -69,6 +74,13 @@ def load_paths(path) -> dict:
         out[k] = Path(v).expanduser()
     if cfg.get("gaugar_output_root"):
         out["gaugar_output_root"] = Path(str(cfg["gaugar_output_root"])).expanduser()
+    controllers = cfg.get("v3_controllers", {})
+    if not isinstance(controllers, dict):
+        fail(f"{path} 的 `v3_controllers` 必須是衣服名稱到 controller.pt 路徑的物件。")
+    out["v3_controllers"] = {
+        str(garment): Path(str(controller)).expanduser()
+        for garment, controller in controllers.items()
+    }
     return out
 
 
@@ -150,6 +162,9 @@ class Job:
     motion: str
     frames: int
     fps: int
+    opacity: float = 1.0
+    opacity_mode: str = "direct"
+    opacity_garments: tuple = ()
 
     @property
     def outfit(self) -> str:
@@ -167,10 +182,24 @@ class Job:
 
     @property
     def key(self) -> str:
-        return f"{self.outfit}/{self.gender}/{self.body_dir}/{self.motion}"
+        return f"{self.outfit}/{self.gender}/{self.body_dir}/{self.video_stem}"
+
+    @property
+    def video_stem(self) -> str:
+        if self.opacity == 1.0 and self.opacity_mode == "direct":
+            return self.motion
+        value = f"{self.opacity:.6f}".rstrip("0").rstrip(".").replace(".", "p")
+        target = ""
+        if self.opacity_garments and self.opacity_garments != self.garments:
+            target = "__target_" + "+".join(self.opacity_garments)
+        return f"{self.motion}__opacity_{self.opacity_mode}_{value}{target}"
+
+    @property
+    def effective_opacity_garments(self) -> tuple:
+        return self.opacity_garments or self.garments
 
     def video_path(self, library: Path) -> Path:
-        return Path(library) / self.outfit / self.gender / self.body_dir / f"{self.motion}.mp4"
+        return Path(library) / self.outfit / self.gender / self.body_dir / f"{self.video_stem}.mp4"
 
     def sidecar_path(self, library: Path) -> Path:
         return self.video_path(library).with_suffix(".json")
@@ -186,8 +215,17 @@ def _positive_int(v, what, where):
     return v
 
 
+def _opacity(v, what, where):
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        fail(f"{where}：{what} 必須是 0 到 1 的數字，但拿到 {v!r}")
+    value = float(v)
+    if not 0.0 <= value <= 1.0:
+        fail(f"{where}：{what} 必須介於 0 到 1，但拿到 {v!r}")
+    return value
+
+
 def expand_jobs(jobs_path) -> list:
-    """Read a job file and expand each entry's heights x weights x motions into Job objects."""
+    """Expand heights x weights x motions x opacities into individual jobs."""
     jobs_path = Path(jobs_path)
     if not jobs_path.is_file():
         fail(f"找不到工作單 {jobs_path}")
@@ -214,13 +252,25 @@ def expand_jobs(jobs_path) -> list:
         # "auto"（或不寫）= 跑完整個動作檔：幀數由動作的長度決定，見 resolve_auto_frames
         frames = AUTO_FRAMES if frames in ("auto", None) else _positive_int(frames, "frames", where)
         fps = _positive_int(e.get("fps", defaults.get("fps", 25)), "fps", where)
+        opacity_mode = str(e.get("opacity_mode", defaults.get("opacity_mode", "direct")))
+        if opacity_mode not in OPACITY_MODES:
+            fail(f"{where}：`opacity_mode` 必須是 {', '.join(OPACITY_MODES)}，但拿到 {opacity_mode!r}")
+        raw_opacities = e.get("opacities", defaults.get("opacities", [1.0]))
+        opacities = [_opacity(v, "opacities", where) for v in _as_list(raw_opacities)]
+        raw_targets = e.get("opacity_garments", defaults.get("opacity_garments", []))
+        opacity_garments = tuple(str(g) for g in _as_list(raw_targets)) if raw_targets else ()
+        unknown_targets = [g for g in opacity_garments if g not in garments]
+        if unknown_targets:
+            fail(f"{where}：`opacity_garments` 只能包含這套衣服裡的名稱；不在套裝內：{', '.join(unknown_targets)}")
         heights = [_positive_int(h, "heights", where) for h in _as_list(e["heights"])]
         weights = [_positive_int(w, "weights", where) for w in _as_list(e["weights"])]
         motions = [str(m) for m in _as_list(e["motions"])]
-        for h, w, m in itertools.product(heights, weights, motions):
-            jobs.append(Job(garments, e["gender"], h, w, m, frames, fps))
+        for h, w, m, opacity in itertools.product(heights, weights, motions, opacities):
+            jobs.append(Job(garments, e["gender"], h, w, m, frames, fps,
+                            opacity, opacity_mode, opacity_garments))
     jobs = list(dict.fromkeys(jobs))                      # drop duplicates, keep order
-    jobs.sort(key=lambda j: (j.outfit, j.gender, j.height, j.weight, j.motion))
+    jobs.sort(key=lambda j: (j.outfit, j.gender, j.height, j.weight, j.motion,
+                             j.opacity_mode, j.opacity, j.opacity_garments))
     return jobs
 
 
@@ -270,7 +320,9 @@ def resolve_auto_frames(jobs, paths: dict, catalog: dict) -> list:
         n = steps[j.motion]
         if n is None or max_frames_for_steps(n) < 1:
             fail(f"動作 `{j.motion}` 讀不出來或太短，無法決定影片幀數")
-        out.append(Job(j.garments, j.gender, j.height, j.weight, j.motion, max_frames_for_steps(n), j.fps))
+        out.append(Job(j.garments, j.gender, j.height, j.weight, j.motion,
+                       max_frames_for_steps(n), j.fps, j.opacity, j.opacity_mode,
+                       j.opacity_garments))
     return list(dict.fromkeys(out))
 
 
@@ -319,7 +371,31 @@ def validate_jobs_against_catalog(jobs, paths: dict, catalog: dict) -> list:
             problems.append(f"動作 `{m}` 不在 catalog.json 裡")
         elif not motion_file(paths, catalog, m).is_file():
             problems.append(f"動作 `{m}` 的檔案不存在：{motion_file(paths, catalog, m)}")
+    for j in jobs:
+        if j.opacity_mode != "v3" or j.opacity in (0.0, 1.0):
+            continue
+        for g in j.effective_opacity_garments:
+            if find_v3_controller(paths, g) is None:
+                problems.append(
+                    f"{j.key} 要使用 V3 透明度，但 `{g}` 找不到 controller.pt；"
+                    "請放到 data_root/garments/<衣服>/opacity_controller_v3/controller.pt，"
+                    "或在 paths.json 的 v3_controllers 指定路徑"
+                )
     return problems
+
+
+def find_v3_controller(paths: dict, garment: str):
+    """Return the first configured/installed V3 checkpoint for one garment."""
+    candidates = []
+    configured = paths.get("v3_controllers", {}).get(garment)
+    if configured is not None:
+        candidates.append(Path(configured))
+    candidates.append(Path(paths["data_root"]) / "garments" / garment / "opacity_controller_v3" / "controller.pt")
+    try:
+        candidates.append(gaugar_output_root(paths) / garment / "opacity_controller_v3" / "controller.pt")
+    except ToolkitError:
+        pass
+    return next((path for path in candidates if path.is_file()), None)
 
 
 # --------------------------------------------------------------------------- sidecar files
@@ -343,13 +419,21 @@ def is_done(library: Path, job: Job) -> bool:
     """A video counts as done only if its mp4 exists and its sidecar says status=done
     with the same frames/fps the job asks for (a different length is a different video)."""
     sc = read_sidecar(job.sidecar_path(library))
+    targets_match = (
+        job.opacity == 1.0 and job.opacity_mode == "direct"
+    ) or tuple(sc.get("opacity_garments", []) if sc else []) == job.opacity_garments
     return bool(sc and sc.get("status") == "done" and job.video_path(library).is_file()
-                and sc.get("frames") == job.frames and sc.get("fps") == job.fps)
+                and sc.get("frames") == job.frames and sc.get("fps") == job.fps
+                and float(sc.get("opacity", 1.0)) == job.opacity
+                and sc.get("opacity_mode", "direct") == job.opacity_mode
+                and targets_match)
 
 
 def make_sidecar(job: Job, status: str, **extra) -> dict:
     d = dict(garments=list(job.garments), gender=job.gender, height=job.height, weight=job.weight,
              motion=job.motion, frames=job.frames, fps=job.fps,
+             opacity=job.opacity, opacity_mode=job.opacity_mode,
+             opacity_garments=list(job.opacity_garments),
              created_at=datetime.now().isoformat(timespec="seconds"),
              machine=socket.gethostname(), status=status)
     d.update(extra)

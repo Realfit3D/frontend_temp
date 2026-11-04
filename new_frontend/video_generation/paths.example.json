@@ -5,5 +5,8 @@
   "gaugar_python": "/你的/GaussianGarments環境/bin/python",
   "data_root": "/你的/data_root",
   "library_root": "/你的/video_library",
-  "work_root": "/你的/work"
+  "work_root": "/你的/work",
+  "v3_controllers": {
+    "資料包衣服名稱": "/完整路徑/controller.pt"
+  }
 }

@@ -27,6 +27,7 @@ from scene.cameras import Camera, get_cam_info
 from scene import MeshGaussianModel
 from scene.avatar_gaussian_model import AvatarSimulationModel
 from scene.avatar_net import AvatarNet
+from opacity_controller_v3_common import load_v3
 from utils.graphics_utils import focal2fov
 from utils.io_utils import read_obj, write_obj
 from aitviewer.headless import HeadlessRenderer
@@ -242,23 +243,84 @@ class Doll(MeshGaussianModel):
     def __init__(self, args, garment_names) -> None:
         super(MeshGaussianModel, self).__init__(args.sh_degree)
         self.active_sh_degree = args.sh_degree
+        opacity_scale = float(getattr(args, "opacity_scale", 1.0))
+        opacity_mode = getattr(args, "opacity_mode", "direct")
+        opacity_sweep = getattr(args, "opacity_sweep", None)
+        needs_v3_controller = (
+            any(0.0 < float(value) < 1.0 for value in opacity_sweep)
+            if opacity_sweep
+            else 0.0 < opacity_scale < 1.0
+        )
+        v3_controller_map = getattr(args, "v3_controller_map", {})
+        allow_v3_controller_transfer = bool(
+            getattr(args, "allow_v3_controller_transfer", False)
+        )
+        opacity_garments = set(getattr(args, "opacity_garments", []) or garment_names)
+        self.garment_names = list(garment_names)
+        unknown_opacity_targets = opacity_garments - set(self.garment_names)
+        if unknown_opacity_targets:
+            raise ValueError(
+                "Opacity targets are not in the trajectory: "
+                + ", ".join(sorted(unknown_opacity_targets))
+            )
 
         # get garment gaussian (temporal version --> to include simulator)
         self.garments = []
         self.avatar_nets = []
+        self.opacity_controllers = []
+        self.opacity_controller_checkpoints = []
         # for _avatar, _tmp in zip(args.avatar_list, args.garment_list):
         for garment_name in garment_names:
             _tmp = Path(DEFAULTS.output_root) / garment_name
             gaussian = AvatarSimulationModel(_tmp, texture_size=args.texture_size)
             self.garments.append(gaussian)
+            # V3 was trained with the rest-pose Gaussian coordinates. Keep a
+            # frozen copy because get_xyz changes with the simulated mesh.
+            gaussian.v3_canonical_xyz = gaussian.get_xyz.detach().clone()
             avatar = AvatarNet(args, gaussian).to('cuda')
 
             stage3_path = _tmp / DEFAULTS.stage3
             avatar.load_ckpt(stage3_path, load_optm=False)
             self.avatar_nets.append(avatar)
 
-
+            controller = checkpoint = None
+            if (garment_name in opacity_garments and opacity_mode == "v3"
+                    and needs_v3_controller):
+                controller_path = v3_controller_map.get(garment_name)
+                if controller_path is None:
+                    candidates = [
+                        _tmp / "opacity_controller_v3" / "controller.pt",
+                        _tmp / "opacity_controller_v3_valid_cameras" / "controller.pt",
+                    ]
+                    controller_path = next((path for path in candidates if path.is_file()), None)
+                if controller_path is None:
+                    raise FileNotFoundError(
+                        f"No V3 opacity controller found for {garment_name}. "
+                        "Pass --v3-controller GARMENT=/absolute/path/controller.pt."
+                    )
+                controller, checkpoint = load_v3(controller_path)
+                checkpoint_subject = checkpoint.get("config", {}).get("subject")
+                if checkpoint_subject and checkpoint_subject != garment_name:
+                    message = (
+                        f"V3 controller subject mismatch: trajectory requests {garment_name}, "
+                        f"but {controller_path} declares {checkpoint_subject}"
+                    )
+                    if not allow_v3_controller_transfer:
+                        raise RuntimeError(message)
+                    print(f"WARNING: experimental zero-shot controller transfer enabled: {message}")
+                center = checkpoint.get("canonical_center")
+                scale = checkpoint.get("canonical_scale")
+                if center is None or scale is None or tuple(center.shape) != (3,) or tuple(scale.shape) != (3,):
+                    raise RuntimeError(f"Invalid canonical normalization in {controller_path}")
+                if not torch.isfinite(center).all() or not torch.isfinite(scale).all() or (scale <= 0).any():
+                    raise RuntimeError(f"Non-finite or non-positive canonical normalization in {controller_path}")
+                print(f"Loaded V3 opacity controller for {garment_name}: {controller_path}")
+            self.opacity_controllers.append(controller)
+            self.opacity_controller_checkpoints.append(checkpoint)
         self.body = None
+        self.opacity_scale = opacity_scale
+        self.opacity_mode = opacity_mode
+        self.opacity_garments = opacity_garments
 
     def update_garments(self, vert_list, ambient_list, normal_list, camera):
         style_list = []
@@ -290,7 +352,35 @@ class Doll(MeshGaussianModel):
         self.features = torch.cat([g.shs for g in self.garments])[vis_mask]
         self.raw_features = torch.cat([g.get_features for g in self.garments])[vis_mask]
         self.style_features = torch.cat([g for g in style_list])[vis_mask]
-        self.opacity = torch.cat([g.get_opacity for g in self.garments])[vis_mask]
+        opacity_chunks = []
+        for index, garment in enumerate(self.garments):
+            base_opacity = garment.get_opacity
+            garment_name = self.garment_names[index]
+            if garment_name not in self.opacity_garments:
+                controlled_opacity = base_opacity
+            elif self.opacity_scale <= 0.0:
+                controlled_opacity = torch.zeros_like(base_opacity)
+            elif self.opacity_scale >= 1.0:
+                controlled_opacity = base_opacity
+            elif self.opacity_mode == "direct":
+                controlled_opacity = base_opacity * self.opacity_scale
+            elif self.opacity_mode == "optical_depth":
+                controlled_opacity = -torch.expm1(
+                    base_opacity.new_tensor(self.opacity_scale)
+                    * torch.log1p(-base_opacity.clamp(0.0, 1.0 - 1e-7))
+                )
+            elif self.opacity_mode == "v3":
+                checkpoint = self.opacity_controller_checkpoints[index]
+                center = checkpoint["canonical_center"].to(base_opacity)
+                scale = checkpoint["canonical_scale"].to(base_opacity)
+                canonical_xyz = (garment.v3_canonical_xyz - center) / scale
+                controlled_opacity = self.opacity_controllers[index](
+                    base_opacity, canonical_xyz, self.opacity_scale
+                )[0]
+            else:
+                raise RuntimeError(f"Unsupported opacity mode: {self.opacity_mode}")
+            opacity_chunks.append(controlled_opacity)
+        self.opacity = torch.cat(opacity_chunks)[vis_mask]
         self.scaling = torch.cat([g.get_scaling for g in self.garments])[vis_mask]
         self.covariance = torch.cat([g.get_covariance() for g in self.garments])[vis_mask]
 
@@ -455,6 +545,16 @@ if __name__ == "__main__":
     parser.add_argument("--bake-samples", type=int, default=16,
         help="Cycles path-tracing sample count for AO/normal texture baking "
              "(previously hardcoded to 16).")
+    parser.add_argument("--opacity-scale", type=float, default=1.0,
+        help="Requested garment opacity from 0 to 1. Default 1 preserves the old output.")
+    parser.add_argument("--opacity-mode", choices=("direct", "optical_depth", "v3"), default="direct",
+        help="Per-Gaussian opacity transform.")
+    parser.add_argument("--v3-controller", action="append", default=[], metavar="GARMENT=PATH",
+        help="V3 checkpoint for one garment; repeat once per garment.")
+    parser.add_argument("--opacity-garments", nargs="+", default=[],
+        help="Only adjust these trajectory garments; default adjusts all garments.")
+    parser.add_argument("--allow-v3-controller-transfer", action="store_true",
+        help="EXPERIMENTAL: allow a V3 checkpoint trained for another garment.")
     parser.add_argument('--gt_mesh', type=str, required=False, default='')
     parser.add_argument('--traj_path', type=str, required=True, default='')
     parser.add_argument('--output_path', type=str, required=True, default='')
@@ -463,6 +563,21 @@ if __name__ == "__main__":
     parser.add_argument("--texture_list", "-tl", required=False, nargs='+', type=str, help="path to texture pkl")
     parser.add_argument('--registration', type=str, required=False, default='')
     args = parser.parse_args(sys.argv[1:])
+    if not 0.0 <= args.opacity_scale <= 1.0:
+        parser.error("--opacity-scale must be between 0 and 1")
+    args.v3_controller_map = {}
+    for item in args.v3_controller:
+        if "=" not in item:
+            parser.error("--v3-controller must use GARMENT=PATH")
+        garment_name, controller_path = item.split("=", 1)
+        if not garment_name or not controller_path:
+            parser.error("--v3-controller must use GARMENT=PATH")
+        if garment_name in args.v3_controller_map:
+            parser.error(f"Duplicate --v3-controller entry for {garment_name}")
+        resolved = Path(controller_path).expanduser().resolve()
+        if not resolved.is_file():
+            parser.error(f"--v3-controller file does not exist: {resolved}")
+        args.v3_controller_map[garment_name] = resolved
     # path processing
 
     if args.HQ: w, h = 3004, 4092

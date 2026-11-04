@@ -11,11 +11,13 @@ manifest.json:
     "generated_at": "...",
     "count": <number of videos>,
     "options": {                       # what a UI can offer, per outfit and gender
-      "<outfit>": {"<gender>": {"heights": [...], "weights": [...], "motions": [...]}}
+      "<outfit>": {"<gender>": {"heights": [...], "weights": [...], "motions": [...],
+                                    "opacities": [...], "opacity_modes": [...]}}
     },
     "videos": [                        # one entry per video; "path" is relative to the library root
       {"path": "...", "garments": [...], "gender": "...", "height": 170, "weight": 60,
-       "motion": "01_01", "frames": 250, "fps": 25}
+       "motion": "01_01", "frames": 250, "fps": 25,
+       "opacity": 1.0, "opacity_mode": "direct"}
     ]
   }
 """
@@ -40,14 +42,30 @@ def build(library: Path) -> dict:
             continue
         videos.append(dict(path=mp4.relative_to(library).as_posix(), garments=sc["garments"],
                            gender=sc["gender"], height=sc["height"], weight=sc["weight"],
-                           motion=sc["motion"], frames=sc["frames"], fps=sc["fps"]))
+                           motion=sc["motion"], frames=sc["frames"], fps=sc["fps"],
+                           opacity=float(sc.get("opacity", 1.0)),
+                           opacity_mode=sc.get("opacity_mode", "direct"),
+                           opacity_garments=sc.get("opacity_garments", [])))
+    # The current frontend has no opacity selector yet and returns the first
+    # matching video. Keep an opaque entry first (prefer the legacy direct
+    # entry, then any 1.0 endpoint) so variants cannot silently change what
+    # the existing UI plays.
+    videos.sort(key=lambda v: (
+        "+".join(v["garments"]), v["gender"], v["height"], v["weight"], v["motion"],
+        0 if (v["opacity"] == 1.0 and v["opacity_mode"] == "direct")
+        else 1 if v["opacity"] == 1.0 else 2,
+        -v["opacity"], v["opacity_mode"], tuple(v["opacity_garments"]), v["path"],
+    ))
     options = {}
     for v in videos:
         o = options.setdefault("+".join(v["garments"]), {}).setdefault(
-            v["gender"], dict(heights=set(), weights=set(), motions=set()))
+            v["gender"], dict(heights=set(), weights=set(), motions=set(),
+                              opacities=set(), opacity_modes=set()))
         o["heights"].add(v["height"])
         o["weights"].add(v["weight"])
         o["motions"].add(v["motion"])
+        o["opacities"].add(v["opacity"])
+        o["opacity_modes"].add(v["opacity_mode"])
     for by_gender in options.values():
         for o in by_gender.values():
             for k in o:

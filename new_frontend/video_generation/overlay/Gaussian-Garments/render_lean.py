@@ -53,6 +53,7 @@ import sys
 import os
 import time
 import functools
+from pathlib import Path
 import numpy as np
 import torch
 import bpy
@@ -165,6 +166,18 @@ if __name__ == "__main__":
              "7 torch.cuda.synchronize() calls/frame (vs 3 without this flag) "
              "which measurably slows the render -- see module docstring. Use "
              "for finding bottlenecks, not for production/timed runs.")
+    parser.add_argument("--opacity-scale", type=float, default=1.0,
+        help="Requested garment opacity from 0 to 1. Default 1 preserves the old output.")
+    parser.add_argument("--opacity-sweep", nargs="+", type=float, default=None,
+        help="Comparison mode: render each frame at several opacity values into separate folders.")
+    parser.add_argument("--opacity-mode", choices=("direct", "optical_depth", "v3"), default="direct",
+        help="Per-Gaussian opacity transform.")
+    parser.add_argument("--v3-controller", action="append", default=[], metavar="GARMENT=PATH",
+        help="V3 checkpoint for one garment; repeat once per garment.")
+    parser.add_argument("--opacity-garments", nargs="+", default=[],
+        help="Only adjust these trajectory garments; default adjusts all garments.")
+    parser.add_argument("--allow-v3-controller-transfer", action="store_true",
+        help="EXPERIMENTAL: allow a V3 checkpoint trained for another garment.")
     parser.add_argument('--traj_path', type=str, required=True, default='')
     parser.add_argument('--output_path', type=str, required=True, default='')
     parser.add_argument("--avatar_list", "-al", required=False, nargs='+', type=str, default=[])
@@ -172,6 +185,23 @@ if __name__ == "__main__":
     parser.add_argument("--texture_list", "-tl", required=False, nargs='+', type=str)
     parser.add_argument('--registration', type=str, required=False, default='')
     args = parser.parse_args(sys.argv[1:])
+    if not 0.0 <= args.opacity_scale <= 1.0:
+        parser.error("--opacity-scale must be between 0 and 1")
+    if args.opacity_sweep and any(not 0.0 <= value <= 1.0 for value in args.opacity_sweep):
+        parser.error("every --opacity-sweep value must be between 0 and 1")
+    args.v3_controller_map = {}
+    for item in args.v3_controller:
+        if "=" not in item:
+            parser.error("--v3-controller must use GARMENT=PATH")
+        garment_name, controller_path = item.split("=", 1)
+        if not garment_name or not controller_path:
+            parser.error("--v3-controller must use GARMENT=PATH")
+        if garment_name in args.v3_controller_map:
+            parser.error(f"Duplicate --v3-controller entry for {garment_name}")
+        resolved = Path(controller_path).expanduser().resolve()
+        if not resolved.is_file():
+            parser.error(f"--v3-controller file does not exist: {resolved}")
+        args.v3_controller_map[garment_name] = resolved
 
     if args.HQ: w, h = 3004, 4092
     else: w, h = 940, 1280
@@ -281,19 +311,34 @@ if __name__ == "__main__":
 
             _body_mask = _body_garm_depth < _garm_depth
 
-            _final = simu.doll.render(gs_cam, simu.doll, args, bg, _body, _body_mask)
+            opacity_values = args.opacity_sweep or [args.opacity_scale]
+            rendered = []
+            for opacity_value in opacity_values:
+                if opacity_value != simu.doll.opacity_scale:
+                    simu.doll.opacity_scale = opacity_value
+                    simu.doll.prepare_gaussian(gs_cam.camera_center, style_list)
+                image = simu.doll.render(gs_cam, simu.doll, args, bg, _body, _body_mask)
+                rendered.append((opacity_value, image))
 
             torch.cuda.synchronize()
             t2 = time.time()
 
-            os.makedirs(os.path.join(simu.output, f"{args.name}"), exist_ok=True)
-            Image.fromarray(np.array(_final, dtype=np.uint8)).save(os.path.join(simu.output, f"{args.name}/{idx:04d}.png"))
+            for opacity_value, image in rendered:
+                if args.opacity_sweep:
+                    value = f"{opacity_value:.6f}".rstrip("0").rstrip(".").replace(".", "p")
+                    frame_dir = f"{args.name}_opacity_{value}"
+                else:
+                    frame_dir = args.name
+                os.makedirs(os.path.join(simu.output, frame_dir), exist_ok=True)
+                Image.fromarray(np.array(image, dtype=np.uint8)).save(
+                    os.path.join(simu.output, frame_dir, f"{idx:04d}.png")
+                )
             t3 = time.time()
 
             total_prep_time += (t1 - t0)
             total_render_time += (t2 - t1)
             total_io_time += (t3 - t2)
-            total_frames += 1
+            total_frames += len(rendered)
 
     global_end_time = time.time()
     print("\n" + "=" * 50)

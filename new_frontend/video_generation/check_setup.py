@@ -74,6 +74,12 @@ def check_data(paths, catalog):
             bad(f"衣服 {g} 缺少：{', '.join(missing)}", "確認資料包已完整下載到 data_root")
         else:
             ok(f"衣服 {g}")
+        controller = data / "garments" / g / "opacity_controller_v3" / "controller.pt"
+        if controller.is_file():
+            ok(f"衣服 {g} 的 V3 opacity controller")
+        else:
+            warn(f"衣服 {g} 沒有 V3 controller：v3 透明度影片不能使用這件衣服",
+                 "執行 sync_v3_controllers.py，或補上 data_root/garments/<衣服>/opacity_controller_v3/controller.pt")
     missing_thumbs = [g for g in catalog["garments"] if not (data / "thumbnails" / f"{g}.png").is_file()]
     if missing_thumbs:
         warn(f"資料包缺少這些衣服的縮圖：{', '.join(missing_thumbs)}",

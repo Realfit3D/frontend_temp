@@ -403,12 +403,18 @@ def simulate(args, fixedsize_dicts_dir: Path, motion_path: Path, n_steps: int, o
 
 
 def render(args, trajectory_path: Path, frames_dir: Path, start_from: int = 0) -> None:
-    run([args.gaugar_python, "render_lean.py",
+    cmd = [args.gaugar_python, "render_lean.py",
          "--traj_path", str(trajectory_path.resolve()),
          "--output_path", str(frames_dir.resolve()),
          "--start_from", str(start_from),
-         "--bake-samples", str(args.bake_samples)],
-        cwd=str(args.gaugar_root), extra_env=RENDER_ENV_EXTRA)
+         "--bake-samples", str(args.bake_samples),
+         "--opacity-scale", str(args.opacity_scale),
+         "--opacity-mode", args.opacity_mode]
+    if args.opacity_garments:
+        cmd += ["--opacity-garments", *args.opacity_garments]
+    for controller in args.v3_controller:
+        cmd += ["--v3-controller", controller]
+    run(cmd, cwd=str(args.gaugar_root), extra_env=RENDER_ENV_EXTRA)
 
 
 def render_turntable(args, trajectory_path: Path, frame_idx: int, output_dir: Path, n_angles: int) -> None:
@@ -485,6 +491,14 @@ def main():
     parser.add_argument("--bake-samples", type=int, default=4,
         help="Same meaning as the other fixedsize scripts' --bake-samples -- see their "
              "--help/READMEs for why 4 is the default (measured no visible difference vs 16).")
+    parser.add_argument("--opacity-scale", type=float, default=1.0,
+        help="Requested garment opacity from 0 to 1. Default 1 preserves the old output.")
+    parser.add_argument("--opacity-mode", choices=("direct", "optical_depth", "v3"), default="direct",
+        help="Gaussian opacity transform used by render_lean.py.")
+    parser.add_argument("--v3-controller", action="append", default=[], metavar="GARMENT=PATH",
+        help="V3 checkpoint for one garment; repeat once per garment.")
+    parser.add_argument("--opacity-garments", nargs="+", default=[],
+        help="Only adjust these garments; default adjusts the whole outfit.")
     parser.add_argument("--turntable-angles", type=int, default=12,
         help="Phase 1: how many evenly-spaced camera azimuths to render of the settled "
              "display pose (see render_turntable.py). Cheap per extra angle -- the expensive "
@@ -519,6 +533,13 @@ def main():
         help="Default: gg_outputs_fixedsize/ next to --contourcraft-root -- SAME as the other "
              "fixedsize scripts, deliberately, so the per-garment and per-outfit caches are shared.")
     args = parser.parse_args()
+
+    if not 0.0 <= args.opacity_scale <= 1.0:
+        parser.error("--opacity-scale must be between 0 and 1")
+    unknown_opacity_targets = [g for g in args.opacity_garments if g not in args.garment_names]
+    if unknown_opacity_targets:
+        parser.error("--opacity-garments must be a subset of --garment-names: " +
+                     ", ".join(unknown_opacity_targets))
 
     if len(args.garment_names) < 2:
         raise ValueError("--garment-names needs at least 2 garments -- for a single garment this "

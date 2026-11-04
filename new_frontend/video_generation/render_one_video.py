@@ -16,7 +16,8 @@ Reuse across videos (kept under work_root, not cleaned up):
 Usage:
     python render_one_video.py --config paths.json \
         --garments Actor02_lower Actor02_upper --gender male \
-        --height 170 --weight 60 --motion 01_01 --frames 250 [--fps 25]
+        --height 170 --weight 60 --motion 01_01 --frames 250 [--fps 25] \
+        [--opacity 0.5 --opacity-mode v3 --opacity-garments Actor02_upper]
 """
 
 import argparse
@@ -26,8 +27,10 @@ import sys
 import time
 from pathlib import Path
 
-from toolkit_common import (DISCARD_FRAMES, Job, ToolkitError, atomic_write_json, ensure_cache_links, load_catalog, load_paths,
-                            make_sidecar, motion_file, print_err, fail, steps_for_frames, AUTO_FRAMES, resolve_auto_frames)
+from toolkit_common import (DISCARD_FRAMES, OPACITY_MODES, Job, ToolkitError, atomic_write_json,
+                            ensure_cache_links, find_v3_controller, load_catalog, load_paths,
+                            make_sidecar, motion_file, print_err, fail, steps_for_frames,
+                            AUTO_FRAMES, resolve_auto_frames)
 
 
 def _safe(s: str) -> str:
@@ -35,7 +38,7 @@ def _safe(s: str) -> str:
 
 
 def run_name(job: Job) -> str:
-    return f"{job.gender}_{job.body_dir}_{job.motion}_f{job.frames}"
+    return f"{job.gender}_{job.body_dir}_{job.video_stem}_f{job.frames}"
 
 
 STAGE_NAMES = {
@@ -97,6 +100,8 @@ def _pipeline_cmd(paths, catalog, job, run_dir_name, precomputed_betas):
            "--full-steps", str(steps_for_frames(job.frames)),
            "--discard-frames", str(DISCARD_FRAMES),
            "--fps", str(job.fps),
+           "--opacity-scale", str(job.opacity),
+           "--opacity-mode", job.opacity_mode,
            "--skip-preview",
            "--run-name", run_dir_name,
            "--contourcraft-root", str(paths["contourcraft_root"]),
@@ -104,8 +109,20 @@ def _pipeline_cmd(paths, catalog, job, run_dir_name, precomputed_betas):
            "--ccraft-python", str(paths["contourcraft_python"]),
            "--gaugar-python", str(paths["gaugar_python"]),
            "--output-root", str(paths["work_root"])]
+    if job.opacity_garments:
+        cmd += ["--opacity-garments", *job.opacity_garments]
     if precomputed_betas is not None:
         cmd += ["--precomputed-betas", str(precomputed_betas)]
+    if job.opacity_mode == "v3" and 0.0 < job.opacity < 1.0:
+        for garment in job.effective_opacity_garments:
+            controller = find_v3_controller(paths, garment)
+            if controller is None:
+                fail(
+                    f"`{garment}` 找不到 V3 controller.pt。請放到 "
+                    "data_root/garments/<衣服>/opacity_controller_v3/controller.pt，"
+                    "或在 paths.json 的 v3_controllers 指定路徑。"
+                )
+            cmd += ["--v3-controller", f"{garment}={controller.resolve()}"]
     return cmd
 
 
@@ -194,14 +211,28 @@ def main():
     ap.add_argument("--motion", required=True, help="動作編號，例：01_01")
     ap.add_argument("--frames", default="auto", help="最後影片的幀數；不寫（auto）= 跑完整個動作檔")
     ap.add_argument("--fps", type=int, default=25)
+    ap.add_argument("--opacity", type=float, default=1.0, help="透明度 0 到 1；預設 1（不透明）")
+    ap.add_argument("--opacity-mode", choices=OPACITY_MODES, default="direct",
+                    help="direct/optical_depth 不需權重；v3 使用每件衣服的已訓練 controller")
+    ap.add_argument("--opacity-garments", nargs="+", default=[],
+                    help="只調整指定衣服；省略表示整套衣服都調整")
     ap.add_argument("--output", type=Path, default=None,
                     help="只輸出到指定的 mp4 路徑（不寫入影片資料庫）。預設寫入 library_root 的標準位置。")
     args = ap.parse_args()
+    if not 0.0 <= args.opacity <= 1.0:
+        ap.error("--opacity 必須介於 0 到 1")
+    unknown_targets = [g for g in args.opacity_garments if g not in args.garments]
+    if unknown_targets:
+        ap.error("--opacity-garments 只能包含 --garments 內的衣服：" + ", ".join(unknown_targets))
     try:
         paths = load_paths(args.config)
         catalog = load_catalog(paths["data_root"])
         frames = AUTO_FRAMES if args.frames == "auto" else int(args.frames)
-        job = resolve_auto_frames([Job(tuple(args.garments), args.gender, args.height, args.weight, args.motion, frames, args.fps)], paths, catalog)[0]
+        job = resolve_auto_frames([
+            Job(tuple(args.garments), args.gender, args.height, args.weight,
+                args.motion, frames, args.fps, args.opacity, args.opacity_mode,
+                tuple(args.opacity_garments))
+        ], paths, catalog)[0]
         if args.output:
             sc = render_video(paths, catalog, job, args.output)
         else:

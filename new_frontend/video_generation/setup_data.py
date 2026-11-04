@@ -11,6 +11,7 @@ checkouts, and hook the downloaded data package up to where those programs expec
 2. Data: for every garment in data_root/garments/ creates symlinks (nothing is copied):
      <gaugar output_root>/<g>/stage1/{template_uv.obj,cameras.json}   -> data package
      <gaugar output_root>/<g>/stage3/ckpt                              -> data package
+     <gaugar output_root>/<g>/opacity_controller_v3/controller.pt      -> data package (when present)
      <work_root>/<g>/{garment_dict.pkl,source_body_fit.pkl}            -> data package cache/
    Existing real files/directories are left alone; links pointing elsewhere are reported.
 
@@ -89,6 +90,9 @@ def link_data(paths: dict) -> bool:
             (gdir / "cache" / "garment_dict.pkl", work / g / "garment_dict.pkl"),
             (gdir / "cache" / "source_body_fit.pkl", work / g / "source_body_fit.pkl"),
         ]
+        controller = gdir / "opacity_controller_v3" / "controller.pt"
+        if controller.is_file():
+            pairs.append((controller, gg_out / g / "opacity_controller_v3" / "controller.pt"))
         results = []
         for src, dst in pairs:
             if not src.exists():
