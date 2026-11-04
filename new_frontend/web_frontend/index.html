@@ -104,8 +104,9 @@ button:focus-visible, select:focus-visible { outline: 3px solid var(--accent); o
 .topbar .spacer { width: 44px; flex: none; }
 
 .try-layout { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.stage { flex: 1; min-height: 0; position: relative; background: var(--ground); display: flex; justify-content: center; }
-.stage video { height: 100%; max-width: 100%; aspect-ratio: 3 / 4; object-fit: contain; transition: opacity .3s; }
+.stage { flex: 1; min-height: 0; position: relative; background: var(--ground); display: flex; justify-content: center; align-items: center; }
+/* 影片縮放比例：想再大或再小，只要改這個百分比（100% = 撐滿舞台高度） */
+.stage video { height: 70%; max-width: 100%; aspect-ratio: 3 / 4; object-fit: contain; transition: opacity .3s; }
 .stage video.hide { opacity: 0; }
 .overlay {
   position: absolute; inset: 0; background: var(--ground);
