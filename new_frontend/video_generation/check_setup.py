@@ -107,10 +107,13 @@ def check_env(paths, catalog):
                      "import scipy, trimesh, open3d, matplotlib",
                      "在既有 ContourCraft 專案環境安裝缺少的套件；參閱 SLEEVE_LBS.md")
     if paths.get("garment_repairs"):
-        python_check("通用初始化修正（numpy、matplotlib）", paths["contourcraft_python"],
-                     "import numpy, matplotlib", "參閱 GARMENT_LBS.md；沿用既有 ContourCraft 環境")
+        python_check("通用初始化修正（numpy、scipy、matplotlib）", paths["contourcraft_python"],
+                     "import numpy, scipy, matplotlib", "參閱 GARMENT_LBS.md；沿用既有 ContourCraft 環境")
         for garment, repair in paths["garment_repairs"].items():
             profile = json.loads(Path(repair["profile"]).read_text(encoding="utf-8"))
+            if profile.get("centering_fraction", 0):
+                python_check(f"{garment} 肢體截面修正（trimesh）", paths["contourcraft_python"],
+                             "import trimesh", "centering_fraction > 0 時需要 trimesh")
             if profile.get("clearance_m", 0):
                 python_check(f"{garment} 人體間距修正（open3d）", paths["contourcraft_python"],
                              "import open3d", "clearance_m > 0 時需要 open3d")

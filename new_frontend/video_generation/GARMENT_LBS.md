@@ -1,7 +1,6 @@
-# 跨衣服的 anatomical LBS 初始化修復（實驗版）
+# 跨衣服的 anatomical LBS 初始化修復
 
-**2026-11-05 真實資料驗證：襯衫候選未通過幾何門檻，長褲僅通過保持不變的對照；尚不可取代既有修正版。**
-完整結果與限制見 [REAL_ASSET_VALIDATION.md](tests/REAL_ASSET_VALIDATION.md)。
+2026-11-05 已在本機 WSL 完成修正及驗證：33 項測試、Actor08 男女兩組動作完整模擬與 GG 抽幀、Actor05 長褲與 Actor08 短褲受控損壞測試通過。完整數據及限制見 [REAL_ASSET_VALIDATION.md](tests/REAL_ASSET_VALIDATION.md)。
 
 這版把 Actor08 的共同問題整理成「同拓撲參考 → 人體區域 → 有界修正 → 重綁定」流程。
 可用於上衣手臂、褲管、軀幹／腰部區域；不用 Actor08 專屬 X 座標裁切或舊頂點索引。
@@ -16,14 +15,15 @@
 |---|---|
 | 壞掉的幾何可能導致錯誤最近鄰綁定 | 用整理前參考的 LBS weights 分區，不用壞結果的 weights 判定衣服部位 |
 | 各體型和衣服尺寸不同 | 位置差、綁定距離、修正上限除以目標人體對應骨鏈長度，不使用固定袖口 X 座標 |
-| 不是每個區域都需要恢復 | 區域參考偏差的第 90 百分位超過觸發值才恢復；健康區域保留 |
+| 不是每個區域都需要恢復 | 推薦 axial profile 以沿骨鏈縮短量 P90 觸發恢復；僅側向偏移則保留輸入形狀做 body fit；健康區域保留 |
 | 只搬動幾何還可能繼續綁錯 | 在相同解剖區域內找最近人體頂點，同步轉移 weights 和 posedirs |
 | 修正不能無限制移動或撕扯網格 | 檢查最大位移、離人體距離、參考邊長變化、三角形方向；不通過就拒絕整份輸出 |
 | 一件衣服的 indices 不能沿用到另一件 | 每件都提供自己的同拓撲、同頂點順序參考，檢查 faces、source betas 和陣列形狀 |
 
 分區為 `left_arm`、`right_arm`、`left_leg`、`right_leg`、`torso`。
 頂點由參考 weights 在這五區中的最大總權重決定歸屬，且需超過 membership 門檻。
-恢復時依權重做 smoothstep 混合，降低區域交界突變。綁定仍是最近人體頂點轉移，沒有學習新的蒙皮演算法。
+v2 用末端區域作為參考錨點，沿網格連接關係解 harmonic residual：在修復範圍內平滑求解相對參考的位移，範圍外保持輸入。
+若邊長／法向警示仍不過，最多擴張有限的鄰接範圍；不放寬門檻。綁定仍是最近人體頂點轉移，沒有學習新的蒙皮演算法。
 
 人體分區不等於服裝語意：實際 Actor08 襯衫參考有 1,445／1,553 個頂點歸入左右臂，
 4,142 個歸入軀幹，另有 584 個下擺頂點歸入腿區。因此不能把「腿區」自動解讀成褲子，
@@ -55,7 +55,14 @@
 3. 本機合法取得的 SMPL-X 模型，以及原本可運行的 ContourCraft 環境。
 4. 人工確認的區域 profile。左右依 SMPL-X 解剖定義。
 
-參考檔可用既有 `export_sleeve_reference.py` 匯出：它匯出的是共通 dict 陣列，並不限袖子。
+參考檔用 `export_garment_reference.py` 匯出；它沿用已存在的安全匯出實作，並不限袖子。
+
+```bash
+"$CC_PY" export_garment_reference.py \
+  --input-garment-dict /data/this_garment_unrelaxed.pkl \
+  --source-fit /data/source_body_fit.pkl \
+  --output-reference /data/this_garment_reference.pkl
+```
 不要用 Actor08 襯衫參考修褲子，也不要用另一個 topology 的衣服參考。
 兩份 dict 必須位於相同 canonical 座標系；本工具不會先做 ICP 或反 LBS 對齊。
 
@@ -75,7 +82,7 @@ CC_PY=/你的/ContourCraft環境/bin/python
   --preview /output/test01/candidate.png
 ```
 
-上衣可複製 `upper.example.json`，褲子可複製 `lower.example.json` 作為起點；不是驗證過的最終參數。
+上衣可複製 `upper.example.json`，短褲用 `lower.example.json`，長褲用 `long_lower.example.json`。這組設定已在本次資料驗證；不同衣服仍需獨立檢查。
 若要只看各區統計，建立內容為 `{"regions": []}` 的 profile；這時無法 apply。
 診斷圖顯示**候選**幾何，標有 gate 狀態；rejected 的圖不能當已成功結果。
 這是 canonical 正交檢查圖，不是相機照片對齊圖，也不是可見區域 IoU。
@@ -88,16 +95,21 @@ CC_PY=/你的/ContourCraft環境/bin/python
 | `regions` | 必須人工選定 | 可以只選左手臂等單側；不自動修改所有分區 |
 | `membership_threshold` | 0.45 | 參考頂點在所屬人體區域的最低權重總和 |
 | `body_membership_threshold` | 0.50 | 可作為最近鄰候選的目標人體頂點區域權重 |
-| `damage_fraction` | 0.10 | 區域 P90 參考偏差／骨鏈長度超過此值才恢復 |
+| `damage_fraction` | 0.10 | 觸發量 P90／骨鏈長度；axial 使用正向長度損失，spatial 使用空間偏差 |
 | `max_displacement_fraction` | 0.75 | 任一候選頂點的最大位移／骨鏈長度上限 |
 | `max_binding_distance_fraction` | 0.50 | 候選頂點離同區人體最近頂點的最大距離／骨鏈長度 |
 | `max_edge_strain` | 0.35 | 涉及修正區的每條非退化邊，與參考長度相比的最大相對變化 |
+| `max_support_fraction` | 0.80 | 拓撲過渡最多涵蓋整件衣服頂點的比例；擴張仍不通過則拒絕 |
+| `restore_trigger` | `spatial` | 向後相容預設；本次通過的 profiles 明確選 `axial` |
+| `centering_fraction` | 0 | 截面平移上限／所用骨段長度；推薦 0.30，需 trimesh |
+| `align_limb_ends` | false | 長袖／長褲可設 true，末端沿軸平移到腕／踝；不延長短袖短褲 |
 | `clearance_m` | 0 | 預設不做表面推離；需要時如 0.006，需 open3d 及可靠封閉人體表面 |
 
 骨鏈：手臂為肩→肘→腕；腿為髖→膝→踝；軀幹為骨盆→脊椎→頸。
 這些值是保守起始設定，**不是論文參數，也尚未證明適用所有衣服／體型**。
 不要只為通過 gate 不斷放寬限制。寬鬆衣物離人體較遠不一定是錯；這時應人工判讀。
 恢復後的邊長與方向檢查只防部分明顯異常，不是自交或穿透的完整證明。
+過渡可能涵蓋選定解剖區域旁的混合權重頂點，報告會記錄支援範圍；需檢查肩部／髖部等交界。
 
 ## 確認後另存修正版
 
@@ -141,20 +153,22 @@ CC_PY=/你的/ContourCraft環境/bin/python
 prepare 後先修復，再模擬。保留 `.before_garment_repair.pkl`、JSON、PNG，並把修復報告寫入影片 sidecar。
 若 gate 失敗，整個 pipeline 停在修復階段，不用壞候選跑模擬。
 
-## 驗證狀態
+## Body fit 與形狀保護
 
-本次 25 項自動測試通過，涵蓋共同程式在合成的手臂、腿、軀幹資料上的恢復，
-座標旋轉／平移、健康區域保留、只重綁定、失敗 gate、來源不被改動與設定傳遞。
-這些是功能與保護條件測試，**不等於真實不同服裝的影片品質驗證**。
+axial profile 將「長度丟失」和「側向偏移」分開。前者以未 relax 參考為 shape reference，後者使用輸入本身（報告中的 `input_preserving_fit`）。邊長限制相對各自的 shape reference 計算，不可把兩者當同一基準比較。
 
-WSL 呼叫回報 `Wsl/E_ACCESSDENIED`；後續已在 111 以 CPU 跑真實襯衫／長褲的幾何檢查，
-襯衫未通過，長褲保持原樣的對照通過。20 步 CPU 模擬因既有載入器仍需要 CUDA 而未完成，尚無新模式的完整影片。
-舊 Actor08 男女修正版的驗證屬於 `SLEEVE_LBS.md` 原模式，不能直接當成新模式的品質證據。
-同學先每件衣服測 20 幀，再看包含極端動作的完整序列，檢查衣服末端滑脫、穿透、拉扯和尺寸。
-不應沿用一個固定袖口距手腕門檻判定所有短袖、長袖或寬鬆服裝。
+截面平移保持截面尺寸，不直接縮放衣服。短衣物使用實際覆蓋的近端骨段，避免將短褲投到小腿軸上。harmonic residual 平滑接回相鄰區域，再交替限制邊長／法向與人體間距；支援範圍最多 80%，失敗就拒絕，沒有為通過測試放寬 gate。
+
+SMPL-X 本次有 32 條嘴部開口邊。signed-distance 查詢使用獨立副本，只封小型、簡單、位於臉部權重區域的邊界，並確認封閉後使用 5-ray voting。非臉部／大開口會拒絕。來源模型、原模擬碰撞器與 garment topology 不修改。這符合 [Open3D signed-distance 的封閉表面假設](https://www.open3d.org/docs/latest/python_api/open3d.t.geometry.RaycastingScene.html)。6 mm clearance 只保證本次修復的支援頂點，不保證全衣服零穿透。
+
+## 驗證與使用範圍
+
+詳見 [實測報告](tests/REAL_ASSET_VALIDATION.md)。33 項測試通過；真實襯衫男女各測 `35_01` 90 個 trajectory frames 與 `137_26_t05` 160 個 frames，並查看首尾及極端動作 GG 圖。長短褲通過健康不變對照與真實網格上的受控 18 cm 縮管測試；後者不是自然發生的失敗，也不是完整長褲動態品質證明。
+
+初始化前幾幀的 Gaussian 模糊仍存在。女性未選取的原始軀幹區域仍有少量穿透。normal-reversal proxy 不是自交／物理品質的完整證明。不同衣物仍須先短測，再驗證完整動作；15 cm 腕距只適用這次長袖實驗，不能套所有衣服。
 
 ```bash
 "$CC_PY" -m unittest discover -s tests -p 'test_*.py'
 ```
 
-所有工作目前只在本機分支，未 push；分享包中的私人 Actor08 參考檔不加入 Git。
+只使用既有 WSL 環境；選用套件為 numpy、scipy、matplotlib，以及 centering 的 trimesh／clearance 的 open3d。未設定 `garment_repairs` 時維持原流程。所有工作只在本機分支，未 push；私人 garment reference 透過分享包提供，不加入 Git。

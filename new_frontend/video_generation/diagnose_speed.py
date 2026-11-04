@@ -37,6 +37,7 @@ REF_DISK_MBPS = 300.0
 
 # 本分支 overlay 程式檔的指紋（已忽略換行格式差異）；包含可選袖口修復。
 EXPECTED = [
+    ("ContourCraft", "body_collider.py", "faf8def35b52119c5c9021e46f9e528977e494672b03e4929dc4e7341af9259b"),
     ("ContourCraft", "combine_garments_untangle.py", "0d3eb3fe6364148995e2768d1000bf1aa9d06cb96cd45aebe509a22d15ea60bc"),
     ("ContourCraft", "contourcraft_fixed_size_upper.py", "045933553620ede5837acf1e53b358cb67913d778940d87e0628bd28d58325b4"),
     ("ContourCraft", "fit_body_from_measurements_fast.py", "bf19e230582b5c48675d8761b462134c5b0c59ed30126ab4d9b6b3b212460e17"),
@@ -45,7 +46,8 @@ EXPECTED = [
     ("ContourCraft", "relax_recovered_garment.py", "e6c9dc5acb655cec6d43676781b319eac10f7ec1abbbcbf723b7224fb829f7d4"),
     ("ContourCraft", "run_outfit_preview_pipeline.py", "4ca4fd3d4c9203449facac714b37b42e85a3fb303d3e82f8fcfbb0bf921a5377"),
     ("ContourCraft", "repair_sleeve_lbs.py", "5684877fa7a529ab70712d0e98faa6203fc878f8d6823467c70c38dff72ec637"),
-    ("ContourCraft", "repair_garment_lbs.py", "7de1041464ed500744f4e3a8167bfa2caaf64ef51cba918783cf9cd9e57750aa"),
+    ("ContourCraft", "repair_garment_lbs.py", "7e246366e58dae9e1584e433e5545894d5541df1732aa0da73e29afc77ef4edb"),
+    ("ContourCraft", "reference_transition.py", "0b1be95bc92b097bde3f925b0e3f0bcd865fe865aa8da8135467a305bcd3736c"),
     ("ContourCraft", "check_sleeve_rollout.py", "cfea89836b0a0be87969cbd0a6749fb17e22984485f7ab0cb514afa14bb13672"),
     ("ContourCraft", "simulate_recovered_outfit.py", "3d9fa5d65a2625b263c12229688ae1fbf8de052d8fee03929e9c3b18baf2a2d9"),
     ("Gaussian-Garments", "inference.py", "563d5fe8dee9723297f39e369ea73a4b0e06fbbb0c9c83ce0828e802861676d8"),
