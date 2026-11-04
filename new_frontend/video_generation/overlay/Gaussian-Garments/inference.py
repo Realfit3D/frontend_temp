@@ -276,6 +276,7 @@ class Doll(MeshGaussianModel):
             self.garments.append(gaussian)
             # V3 was trained with the rest-pose Gaussian coordinates. Keep a
             # frozen copy because get_xyz changes with the simulated mesh.
+            gaussian.update_face_coor()
             gaussian.v3_canonical_xyz = gaussian.get_xyz.detach().clone()
             avatar = AvatarNet(args, gaussian).to('cuda')
 
