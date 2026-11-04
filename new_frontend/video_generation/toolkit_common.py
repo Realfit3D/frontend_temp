@@ -69,6 +69,32 @@ def load_paths(path) -> dict:
         out[k] = Path(v).expanduser()
     if cfg.get("gaugar_output_root"):
         out["gaugar_output_root"] = Path(str(cfg["gaugar_output_root"])).expanduser()
+    repairs = cfg.get("sleeve_repairs", {})
+    if not isinstance(repairs, dict):
+        fail("sleeve_repairs 必須是以衣服名稱為 key 的物件")
+    out["sleeve_repairs"] = {}
+    for garment, repair in repairs.items():
+        if not isinstance(repair, dict):
+            fail(f"sleeve_repairs.{garment} 必須是物件")
+        extra = set(repair) - {"reference_dict", "gender_modes"}
+        if extra:
+            fail(f"sleeve_repairs.{garment} 未知設定：{sorted(extra)}")
+        modes = repair.get("gender_modes", {})
+        if not isinstance(modes, dict) or not modes:
+            fail(f"sleeve_repairs.{garment}.gender_modes 必須指定啟用的性別與模式")
+        if any(g not in GENDERS or m not in ("restore-rebind", "radial") for g, m in modes.items()):
+            fail(f"sleeve_repairs.{garment}：性別限 male/female，模式限 restore-rebind/radial")
+        item = {"gender_modes": dict(modes)}
+        if repair.get("reference_dict"):
+            reference = Path(repair["reference_dict"]).expanduser()
+            if not reference.is_absolute():
+                reference = path.resolve().parent / reference
+            if not reference.is_file():
+                fail(f"袖口參考檔不存在：{reference}（參閱 SLEEVE_LBS.md）")
+            item["reference_dict"] = str(reference.resolve())
+        if "restore-rebind" in modes.values() and "reference_dict" not in item:
+            fail(f"sleeve_repairs.{garment} 的 restore-rebind 需要 reference_dict")
+        out["sleeve_repairs"][garment] = item
     return out
 
 

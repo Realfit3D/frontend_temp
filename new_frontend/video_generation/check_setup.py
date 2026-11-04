@@ -102,6 +102,10 @@ def check_env(paths, catalog):
         bad(f"找不到 {cc_defaults}", "確認 contourcraft_root 指向 ContourCraft 資料夾")
     python_check("ContourCraft 環境（torch、smplx）", paths["contourcraft_python"],
                  "import torch, smplx, numpy", "確認這個環境已依官方說明安裝 ContourCraft 需要的套件")
+    if paths.get("sleeve_repairs"):
+        python_check("袖口修正套件（scipy、trimesh、open3d、matplotlib）", paths["contourcraft_python"],
+                     "import scipy, trimesh, open3d, matplotlib",
+                     "在既有 ContourCraft 專案環境安裝缺少的套件；參閱 SLEEVE_LBS.md")
     python_check("ContourCraft 環境可以使用 GPU", paths["contourcraft_python"],
                  "import torch,sys; sys.exit(0 if torch.cuda.is_available() else 1)",
                  "確認 NVIDIA 驅動與 PyTorch 的 CUDA 版本相符")

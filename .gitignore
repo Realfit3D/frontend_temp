@@ -9,3 +9,7 @@ __pycache__/
 .DS_Store
 # Windows 下載標記檔
 *:Zone.Identifier
+
+# Private/reference garment data distributed separately from code.
+reference_assets/
+sleeve_repair_outputs/

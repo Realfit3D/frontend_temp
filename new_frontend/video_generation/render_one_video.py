@@ -20,6 +20,7 @@ Usage:
 """
 
 import argparse
+import json
 import shutil
 import subprocess
 import sys
@@ -106,6 +107,10 @@ def _pipeline_cmd(paths, catalog, job, run_dir_name, precomputed_betas):
            "--output-root", str(paths["work_root"])]
     if precomputed_betas is not None:
         cmd += ["--precomputed-betas", str(precomputed_betas)]
+    repairs = {g: paths["sleeve_repairs"][g] for g in job.garments
+               if g in paths.get("sleeve_repairs", {})}
+    if repairs:
+        cmd += ["--sleeve-repairs-json", json.dumps(repairs)]
     return cmd
 
 
@@ -171,6 +176,13 @@ def render_video(paths: dict, catalog: dict, job: Job, dest_video: Path, dest_si
     tmp.replace(dest_video)
     stages = stage_timings(lp)
     sc = make_sidecar(job, "done", elapsed_seconds=round(elapsed), stage_seconds=stages)
+    repair_reports = {}
+    for garment in job.garments:
+        rp = run_dir / "fixedsize_dicts" / job.work_name / f"{garment}.sleeve_repair.json"
+        if rp.is_file():
+            repair_reports[garment] = json.loads(rp.read_text())
+    if repair_reports:
+        sc["sleeve_repairs"] = repair_reports
     if dest_sidecar is not None:
         atomic_write_json(dest_sidecar, sc)       # written last: sidecar says "done" only once the mp4 is in place
     if not keep_run_dir:

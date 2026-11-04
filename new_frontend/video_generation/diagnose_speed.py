@@ -35,7 +35,7 @@ REF_WARP_GBPS = 260.0
 NEED_VRAM_MIB = 7900
 REF_DISK_MBPS = 300.0
 
-# 推上 GitHub（new-frontend 分支，commit 781e57f）的 11 個程式檔的指紋（已忽略換行格式差異）
+# 本分支 overlay 程式檔的指紋（已忽略換行格式差異）；包含可選袖口修復。
 EXPECTED = [
     ("ContourCraft", "combine_garments_untangle.py", "0d3eb3fe6364148995e2768d1000bf1aa9d06cb96cd45aebe509a22d15ea60bc"),
     ("ContourCraft", "contourcraft_fixed_size_upper.py", "045933553620ede5837acf1e53b358cb67913d778940d87e0628bd28d58325b4"),
@@ -43,7 +43,9 @@ EXPECTED = [
     ("ContourCraft", "pin_garment_waistband.py", "09dbb9155fe09af9bfd91bb21a3d05001df85e8ba8f0e78a31d90e3706f86be3"),
     ("ContourCraft", "recover_resize_garment_bootstrap.py", "371baf4b25965ac0df844bbec3f9754823199b892ee358621ada0bee7309858e"),
     ("ContourCraft", "relax_recovered_garment.py", "e6c9dc5acb655cec6d43676781b319eac10f7ec1abbbcbf723b7224fb829f7d4"),
-    ("ContourCraft", "run_outfit_preview_pipeline.py", "b9ac78f76d94844f7457a328cd60d45cfaf15888a7952b67d59a6d82695c25f5"),
+    ("ContourCraft", "run_outfit_preview_pipeline.py", "8f54120b0d948d30a610e9a25c643a4aab611aa4fad1f947268f92dcbd08180a"),
+    ("ContourCraft", "repair_sleeve_lbs.py", "c0205d9687ba4387e71715363a9d2441378ac1e22ec0ccaa29a447a33d1937da"),
+    ("ContourCraft", "check_sleeve_rollout.py", "cfea89836b0a0be87969cbd0a6749fb17e22984485f7ab0cb514afa14bb13672"),
     ("ContourCraft", "simulate_recovered_outfit.py", "3d9fa5d65a2625b263c12229688ae1fbf8de052d8fee03929e9c3b18baf2a2d9"),
     ("Gaussian-Garments", "inference.py", "563d5fe8dee9723297f39e369ea73a4b0e06fbbb0c9c83ce0828e802861676d8"),
     ("Gaussian-Garments", "render_lean.py", "e0fb1aba693a4bead1ff51d01dafd02ede2b571160df0bfb4b71296bbb0a5ca1"),

@@ -373,6 +373,27 @@ def rebind_all_garments(args, staging_dir: Path, motion_path: Path, source_fits:
         if garment_name in args.pin_waistband_if_snug_garments:
             prepare_cmd += ["--pin-waistband-if-snug", "--fit-ratio-threshold", str(args.fit_ratio_threshold)]
         run(prepare_cmd)
+        # Opt-in and per target gender. Shared source/untangle caches stay read-only.
+        config = args.sleeve_repairs_json.get(garment_name, {})
+        mode = config.get("gender_modes", {}).get(args.gender)
+        if mode:
+            temporary = output_dict_path.with_suffix(".sleeve_repaired.pkl")
+            report = output_dict_path.with_suffix(".sleeve_repair.json")
+            backup = output_dict_path.with_suffix(".before_sleeve_repair.pkl")
+            if backup.exists():
+                raise FileExistsError(f"Repair backup already exists: {backup}; use a new run-name")
+            repair_cmd = [args.ccraft_python, str(SCRIPT_DIR / "repair_sleeve_lbs.py"),
+                "--input-garment-dict", str(output_dict_path),
+                "--output-garment-dict", str(temporary),
+                "--body-model-root", str(args.body_model_root),
+                "--target-gender", args.gender, "--mode", mode, "--report", str(report),
+                "--preview", str(output_dict_path.with_suffix(".sleeve_repair.png"))]
+            if config.get("reference_dict"):
+                repair_cmd += ["--reference-garment-dict", config["reference_dict"]]
+            run(repair_cmd)
+            shutil.copy2(output_dict_path, backup)
+            temporary.replace(output_dict_path)
+            print(f"Sleeve repair applied before simulation: {garment_name}, {args.gender}, {mode}", flush=True)
 
 
 def simulate(args, fixedsize_dicts_dir: Path, motion_path: Path, n_steps: int, output_trajectory: Path) -> None:
@@ -444,6 +465,10 @@ def stitch(args, renders_dir: Path, video_path: Path) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--sleeve-repairs-json", type=json.loads, default={},
+        help='Optional garment configuration; normally passed from paths.json by render_one_video.py. '
+             'Example: {"Actor08_shirt":{"reference_dict":"/data/unrelaxed.pkl",'
+             '"gender_modes":{"male":"restore-rebind","female":"radial"}}}')
     parser.add_argument("--garment-names", nargs="+", required=True,
         help="Innermost to outermost, 2+ garments (a fixed catalog combo). Each must match a "
              "Gaussian-Garments output_root/ folder.")
@@ -519,6 +544,16 @@ def main():
         help="Default: gg_outputs_fixedsize/ next to --contourcraft-root -- SAME as the other "
              "fixedsize scripts, deliberately, so the per-garment and per-outfit caches are shared.")
     args = parser.parse_args()
+    if not isinstance(args.sleeve_repairs_json, dict):
+        parser.error("--sleeve-repairs-json must be an object keyed by garment name")
+    for name, config in args.sleeve_repairs_json.items():
+        if not isinstance(config, dict) or not isinstance(config.get("gender_modes"), dict):
+            parser.error(f"Invalid sleeve repair configuration for {name}")
+        if any(g not in ("male", "female") or m not in ("restore-rebind", "radial")
+               for g, m in config["gender_modes"].items()):
+            parser.error(f"Invalid target gender or repair mode for {name}")
+        if "restore-rebind" in config["gender_modes"].values() and not config.get("reference_dict"):
+            parser.error(f"restore-rebind needs reference_dict for {name}")
 
     if len(args.garment_names) < 2:
         raise ValueError("--garment-names needs at least 2 garments -- for a single garment this "

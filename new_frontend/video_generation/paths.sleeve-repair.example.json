@@ -1,0 +1,18 @@
+{
+  "contourcraft_root": "/你的/ContourCraft",
+  "gaugar_root": "/你的/Gaussian-Garments",
+  "contourcraft_python": "/你的/ContourCraft環境/bin/python",
+  "gaugar_python": "/你的/GaussianGarments環境/bin/python",
+  "data_root": "/你的/data_root",
+  "library_root": "/你的/video_library_sleeve_repair",
+  "work_root": "/你的/work_sleeve_repair",
+  "sleeve_repairs": {
+    "Actor08_shirt": {
+      "reference_dict": "reference_assets/Actor08_shirt_unrelaxed.pkl",
+      "gender_modes": {
+        "male": "restore-rebind",
+        "female": "radial"
+      }
+    }
+  }
+}
