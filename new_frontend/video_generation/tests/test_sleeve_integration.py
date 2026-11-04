@@ -110,6 +110,34 @@ class ConfigAndCommand(unittest.TestCase):
             with self.assertRaises(ToolkitError):
                 load_paths(path)
 
+    def test_generic_profile_is_resolved_and_forwarded(self):
+        with tempfile.TemporaryDirectory() as folder:
+            p = Path(folder)
+            path = self.config(folder)
+            (p / "ref.pkl").touch()
+            (p / "upper.json").write_text('{"regions":["left_arm"]}')
+            cfg = json.loads(path.read_text())
+            cfg["garment_repairs"] = {"shirt": {"reference_dict": "ref.pkl",
+                "profile": "upper.json", "genders": ["male"]}}
+            path.write_text(json.dumps(cfg))
+            paths = load_paths(path)
+            job = Job(("lower", "shirt"), "male", 175, 75, "35_01", 80, 25)
+            catalog = {"garments": {g: {"source_gender": "male"} for g in job.garments},
+                       "motions": {"35_01": {"file": "35.npz"}}}
+            cmd = _pipeline_cmd(paths, catalog, job, "test", None)
+            forwarded = json.loads(cmd[cmd.index("--garment-repairs-json") + 1])
+            self.assertEqual(Path(forwarded["shirt"]["profile"]), (p / "upper.json").resolve())
+            self.assertNotIn("--sleeve-repairs-json", cmd)
+
+    def test_generic_and_legacy_cannot_double_apply(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = self.config(folder, {"shirt": {"gender_modes": {"male": "radial"}}})
+            cfg = json.loads(path.read_text())
+            cfg["garment_repairs"] = {"shirt": {}}
+            path.write_text(json.dumps(cfg))
+            with self.assertRaisesRegex(ToolkitError, "不可同時"):
+                load_paths(path)
+
 
 if __name__ == "__main__":
     unittest.main()

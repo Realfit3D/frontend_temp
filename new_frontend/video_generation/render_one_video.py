@@ -111,6 +111,10 @@ def _pipeline_cmd(paths, catalog, job, run_dir_name, precomputed_betas):
                if g in paths.get("sleeve_repairs", {})}
     if repairs:
         cmd += ["--sleeve-repairs-json", json.dumps(repairs)]
+    generic = {g: paths["garment_repairs"][g] for g in job.garments
+               if g in paths.get("garment_repairs", {})}
+    if generic:
+        cmd += ["--garment-repairs-json", json.dumps(generic)]
     return cmd
 
 
@@ -183,6 +187,13 @@ def render_video(paths: dict, catalog: dict, job: Job, dest_video: Path, dest_si
             repair_reports[garment] = json.loads(rp.read_text())
     if repair_reports:
         sc["sleeve_repairs"] = repair_reports
+    generic_reports = {}
+    for garment in job.garments:
+        rp = run_dir / "fixedsize_dicts" / job.work_name / f"{garment}.garment_repair.json"
+        if rp.is_file():
+            generic_reports[garment] = json.loads(rp.read_text())
+    if generic_reports:
+        sc["garment_repairs"] = generic_reports
     if dest_sidecar is not None:
         atomic_write_json(dest_sidecar, sc)       # written last: sidecar says "done" only once the mp4 is in place
     if not keep_run_dir:

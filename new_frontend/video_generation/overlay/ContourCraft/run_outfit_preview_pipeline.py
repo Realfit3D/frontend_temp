@@ -394,6 +394,23 @@ def rebind_all_garments(args, staging_dir: Path, motion_path: Path, source_fits:
             shutil.copy2(output_dict_path, backup)
             temporary.replace(output_dict_path)
             print(f"Sleeve repair applied before simulation: {garment_name}, {args.gender}, {mode}", flush=True)
+        generic = args.garment_repairs_json.get(garment_name, {})
+        if args.gender in generic.get("genders", []):
+            temporary = output_dict_path.with_suffix(".garment_repaired.pkl")
+            backup = output_dict_path.with_suffix(".before_garment_repair.pkl")
+            if backup.exists():
+                raise FileExistsError(f"Repair backup already exists: {backup}; use a new run-name")
+            run([args.ccraft_python, str(SCRIPT_DIR / "repair_garment_lbs.py"),
+                 "--input-garment-dict", str(output_dict_path),
+                 "--reference-garment-dict", generic["reference_dict"],
+                 "--profile", generic["profile"],
+                 "--body-model-root", str(args.body_model_root),
+                 "--apply", "--output-garment-dict", str(temporary),
+                 "--report", str(output_dict_path.with_suffix(".garment_repair.json")),
+                 "--preview", str(output_dict_path.with_suffix(".garment_repair.png"))])
+            shutil.copy2(output_dict_path, backup)
+            temporary.replace(output_dict_path)
+            print(f"Anatomical garment repair applied: {garment_name}, {args.gender}", flush=True)
 
 
 def simulate(args, fixedsize_dicts_dir: Path, motion_path: Path, n_steps: int, output_trajectory: Path) -> None:
@@ -465,6 +482,8 @@ def stitch(args, renders_dir: Path, video_path: Path) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--garment-repairs-json", type=json.loads, default={},
+        help="Opt-in anatomical repair config; see GARMENT_LBS.md. Rejected candidates stop the pipeline.")
     parser.add_argument("--sleeve-repairs-json", type=json.loads, default={},
         help='Optional garment configuration; normally passed from paths.json by render_one_video.py. '
              'Example: {"Actor08_shirt":{"reference_dict":"/data/unrelaxed.pkl",'
@@ -544,6 +563,16 @@ def main():
         help="Default: gg_outputs_fixedsize/ next to --contourcraft-root -- SAME as the other "
              "fixedsize scripts, deliberately, so the per-garment and per-outfit caches are shared.")
     args = parser.parse_args()
+    if not isinstance(args.garment_repairs_json, dict):
+        parser.error("--garment-repairs-json must be an object")
+    for name, config in args.garment_repairs_json.items():
+        if (not isinstance(config, dict) or set(config) != {"reference_dict", "profile", "genders"}
+                or not isinstance(config["genders"], list) or not config["genders"]
+                or any(g not in ("male", "female") for g in config["genders"])
+                or not all(isinstance(config[k], str) and config[k] for k in ("reference_dict", "profile"))):
+            parser.error(f"Invalid garment repair config for {name}")
+        if isinstance(args.sleeve_repairs_json, dict) and name in args.sleeve_repairs_json:
+            parser.error(f"Cannot apply both sleeve and anatomical repairs to {name}")
     if not isinstance(args.sleeve_repairs_json, dict):
         parser.error("--sleeve-repairs-json must be an object keyed by garment name")
     for name, config in args.sleeve_repairs_json.items():

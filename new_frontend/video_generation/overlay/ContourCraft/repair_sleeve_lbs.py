@@ -169,8 +169,6 @@ def radial_clearance(g, body_vertices, body_faces, joints, clearance=.006):
 
 def repair(input_dict, reference_dict, body_model_root, gender=None, mode="restore-rebind", clearance=.006):
     """Return a new garment dict, a JSON-safe report, and preview geometry."""
-    import torch
-    import smplx
     if mode not in ("restore-rebind", "radial"):
         raise ValueError(f"Unknown repair mode: {mode}")
     if mode == "restore-rebind" and reference_dict is None:
@@ -182,6 +180,8 @@ def repair(input_dict, reference_dict, body_model_root, gender=None, mode="resto
     meta = input_dict["fixed_size_metadata"]
     if meta.get("target_gender", gender) != gender:
         raise ValueError("fixed_size_metadata.target_gender does not match input gender")
+    import torch
+    import smplx
     g = copy.deepcopy(input_dict)
     original = array(g["lbs"]["v"]).copy()
     model = smplx.create(str(body_model_root), model_type="smplx", gender=gender, use_pca=False)
@@ -236,14 +236,14 @@ def repair(input_dict, reference_dict, body_model_root, gender=None, mode="resto
     return g, report, (body, model.faces, original, array(g["lbs"]["v"]), array(g["faces"]))
 
 
-def preview(path, geometry):
+def preview(path, geometry, label="Sleeve repair", full_body=False):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib.collections import PolyCollection
     body, body_faces, before, after, faces = geometry
     fig, axes = plt.subplots(1, 2, figsize=(13, 7))
-    for ax, v, label in zip(axes, (before, after), ("Before", "Sleeve repair")):
+    for ax, v, title in zip(axes, (before, after), ("Before", label)):
         polygons = np.concatenate((body[body_faces][:, :, [0, 1]], v[faces][:, :, [0, 1]]))
         depths = np.concatenate((body[body_faces, 2].mean(1), v[faces, 2].mean(1)))
         colors = np.concatenate((np.tile([.7, .75, .8, 1], (len(body_faces), 1)),
@@ -252,9 +252,15 @@ def preview(path, geometry):
         ax.add_collection(PolyCollection(polygons[order], facecolors=colors[order], edgecolors="none"))
         ax.set_xlim(.95, -.95)
         ax.set_ylim(-.6, .9)
+        if full_body:
+            all_vertices = np.concatenate((body, before, after))
+            lo, hi = all_vertices.min(0), all_vertices.max(0)
+            margin = max(float(np.max(hi - lo)) * .05, .02)
+            ax.set_xlim(hi[0] + margin, lo[0] - margin)
+            ax.set_ylim(lo[1] - margin, hi[1] + margin)
         ax.set_aspect("equal")
         ax.axis("off")
-        ax.set_title(label)
+        ax.set_title(title)
     fig.tight_layout()
     fig.savefig(path, dpi=160)
     plt.close(fig)

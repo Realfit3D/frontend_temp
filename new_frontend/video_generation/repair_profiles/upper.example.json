@@ -1,0 +1,10 @@
+{
+  "mode": "restore-rebind",
+  "regions": ["left_arm", "right_arm"],
+  "membership_threshold": 0.45,
+  "damage_fraction": 0.10,
+  "max_displacement_fraction": 0.75,
+  "max_binding_distance_fraction": 0.50,
+  "max_edge_strain": 0.35,
+  "clearance_m": 0.0
+}

@@ -95,6 +95,27 @@ def load_paths(path) -> dict:
         if "restore-rebind" in modes.values() and "reference_dict" not in item:
             fail(f"sleeve_repairs.{garment} 的 restore-rebind 需要 reference_dict")
         out["sleeve_repairs"][garment] = item
+    generic = cfg.get("garment_repairs", {})
+    if not isinstance(generic, dict):
+        fail("garment_repairs 必須以衣服名稱為 key")
+    out["garment_repairs"] = {}
+    for garment, item in generic.items():
+        if garment in out["sleeve_repairs"]:
+            fail(f"{garment} 不可同時啟用 sleeve_repairs 和 garment_repairs")
+        if not isinstance(item, dict) or set(item) != {"reference_dict", "profile", "genders"}:
+            fail(f"garment_repairs.{garment} 需要 reference_dict/profile/genders")
+        genders = item["genders"]
+        if (not isinstance(genders, list) or not genders or
+                any(g not in GENDERS for g in genders) or len(set(genders)) != len(genders)):
+            fail(f"garment_repairs.{garment}.genders 限 male/female")
+        resolved = {"genders": genders}
+        for key in ("reference_dict", "profile"):
+            p = Path(item[key]).expanduser()
+            p = p if p.is_absolute() else path.resolve().parent / p
+            if not p.is_file():
+                fail(f"garment_repairs.{garment}.{key} 不存在：{p}")
+            resolved[key] = str(p.resolve())
+        out["garment_repairs"][garment] = resolved
     return out
 
 

@@ -8,6 +8,8 @@
 
 Actor08 袖口初始化的可選修正與分享檔案，請看 [SLEEVE_LBS.md](SLEEVE_LBS.md)。預設不啟用；設定後會在 fixed-size 綁定之後、模擬之前修復指定衣服，並保留備份與報告。
 
+跨衣服／手臂／褲管／軀幹的實驗版共同修復流程，請看 [GARMENT_LBS.md](GARMENT_LBS.md)。使用每件自己的參考檔與區域 profile，預設關閉；尚待真實多衣服完整動作驗證。
+
 ## 流程
 
 ```
