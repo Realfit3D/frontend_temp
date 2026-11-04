@@ -129,6 +129,18 @@ button:focus-visible, select:focus-visible { outline: 3px solid var(--accent); o
 .panel { flex: none; border-top: 1px solid var(--divider); padding: 10px 0 calc(12px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 10px; }
 .panel .section-head { display: none; }
 .motions { display: flex; gap: 8px; padding: 0 14px; }
+/* 衣服不透明度拉桿：只停在實際有影片的刻度；沒有透明影片時整個區塊隱藏 */
+.opacity-box { padding: 0 14px; }
+.opacity-title { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.opacity-title .val { font-size: 15px; font-weight: 700; }
+.opacity-slider { display: block; width: 100%; height: 36px; margin: 4px 0 0; accent-color: var(--ink); cursor: pointer; }
+.opacity-slider:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
+.opacity-ticks { display: flex; justify-content: space-between; padding: 0 6px; margin-top: -2px; }
+.opacity-ticks button {
+  border: 0; background: none; padding: 6px 4px; min-width: 44px; font-size: 14px; font-weight: 500; color: var(--ink);
+}
+.opacity-ticks button[aria-pressed="true"] { font-weight: 700; }
+.opacity-ticks button:disabled { color: var(--disabled); cursor: default; text-decoration: line-through; text-decoration-color: #D0D0CC; }
 .garment-row { display: flex; align-items: center; gap: 8px; padding-left: 14px; }
 .garment-row .row-label { flex: none; width: 20px; writing-mode: vertical-rl; letter-spacing: 0.3em; }
 .garments {
@@ -189,6 +201,10 @@ button:focus-visible, select:focus-visible { outline: 3px solid var(--accent); o
   .panel .section-head .count { font-size: 16px; color: var(--muted); }
   .panel-section { display: flex; flex-direction: column; gap: 14px; }
   .motions { padding: 0; gap: 12px; flex-wrap: wrap; }
+  .opacity-box { padding: 0; }
+  .opacity-title .val { font-size: 20px; }
+  .opacity-slider { height: 44px; }
+  .opacity-ticks button { font-size: 18px; min-width: 56px; padding: 8px 6px; }
   .pill { flex: 1 1 140px; height: 60px; border-radius: 30px; border-width: 2px; font-size: 21px; }
   .garment-row { display: block; padding: 0; }
   .garment-row .row-label { display: none; }
@@ -290,6 +306,13 @@ button:focus-visible, select:focus-visible { outline: 3px solid var(--accent); o
         <div class="section-head"><span class="label">動作</span></div>
         <div class="motions" id="motions"></div>
       </div>
+      <div class="panel-section" id="opacity-section" hidden>
+        <div class="opacity-box">
+          <div class="opacity-title"><span class="label">衣服不透明度</span><span class="val" id="opacity-val"></span></div>
+          <input type="range" class="opacity-slider" id="opacity" min="0" max="0" step="1" value="0" aria-label="衣服不透明度">
+          <div class="opacity-ticks" id="opacity-ticks"></div>
+        </div>
+      </div>
       <div class="panel-section">
         <div class="section-head"><span class="label">上身</span><span class="count" id="upper-count"></span></div>
         <div class="garment-row"><span class="label row-label">上身</span><div class="garments" id="uppers"></div></div>
@@ -315,7 +338,7 @@ let lib = null;
  * 介面邏輯
  * 選項不可選（變灰）的規則在 library.js：沒有任何影片符合時才會變灰。
  * ============================================================ */
-const state = { gender: null, height: null, weight: null, upper: null, lower: null, motion: null };
+const state = { gender: null, height: null, weight: null, upper: null, lower: null, motion: null, opacity: null };
 const $ = (id) => document.getElementById(id);
 const video = $('video');
 
@@ -402,8 +425,59 @@ function fixMotion() {
   const cur = state.motion && lib.motions(state).find((m) => m.id === state.motion);
   if (!cur || cur.disabled) state.motion = lib.firstMotion(state);
 }
+// 目前的不透明度如果在這組條件下沒有影片，就回到不透明。
+function fixOpacity() {
+  if (!state.opacity) return;
+  const cur = lib.opacities(state).find((o) => o.id === state.opacity);
+  if (!cur || cur.disabled) state.opacity = null;
+}
+function renderOpacity() {
+  const items = lib.opacities(state);
+  $('opacity-section').hidden = items.length === 0;        // 沒有任何透明影片 = 不顯示拉桿
+  if (!items.length) return;
+  const curId = state.opacity || '1';
+  const idx = Math.max(0, items.findIndex((o) => o.id === curId));
+  const slider = $('opacity');
+  slider.max = String(items.length - 1);
+  slider.value = String(idx);
+  slider.setAttribute('aria-valuetext', items[idx].label);
+  $('opacity-val').textContent = items[idx].label;
+  const ticks = $('opacity-ticks');
+  ticks.innerHTML = '';
+  items.forEach((o, i) => {
+    const b = el('button', { type: 'button', 'aria-pressed': String(i === idx), text: o.label, onclick: () => setOpacityIndex(i) });
+    if (o.disabled) b.disabled = true;
+    ticks.appendChild(b);
+  });
+}
+// 拉到沒有影片的刻度時，吸附到最近有影片的刻度。
+function nearestEnabled(items, i) {
+  for (let d = 0; d < items.length; d++) {
+    for (const j of [i - d, i + d]) if (items[j] && !items[j].disabled) return j;
+  }
+  return -1;
+}
+function setOpacityIndex(i) {
+  const items = lib.opacities(state);
+  const j = nearestEnabled(items, i);
+  if (j < 0) return;
+  const id = items[j].id === '1' ? null : items[j].id;
+  if (id === state.opacity) { renderOpacity(); return; }
+  state.opacity = id;
+  renderTryPage();
+  loadVideo();
+}
+$('opacity').addEventListener('input', (e) => {            // 拖曳中：只更新數字與吸附位置，放開才換影片
+  const items = lib.opacities(state);
+  const j = nearestEnabled(items, Number(e.target.value));
+  if (j >= 0) { e.target.value = String(j); $('opacity-val').textContent = items[j].label; }
+});
+$('opacity').addEventListener('change', (e) => setOpacityIndex(Number(e.target.value)));
+
 function renderTryPage() {
   fixMotion();
+  fixOpacity();
+  renderOpacity();
   const motions = $('motions');
   motions.innerHTML = '';
   lib.motions(state).forEach((m) => {
@@ -458,7 +532,8 @@ function loadVideo() {
   }
   const url = lib.videoUrl(state);
   if (!url) { video.removeAttribute('src'); setStage('error'); return; }
-  $('caption-text').textContent = `${lib.labelOf('upper', state.upper)} ＋ ${lib.labelOf('lower', state.lower)}・${lib.labelOf('motion', state.motion)}`;
+  const opText = state.opacity ? `・不透明度 ${lib.labelOf('opacity', state.opacity)}` : '';
+  $('caption-text').textContent = `${lib.labelOf('upper', state.upper)} ＋ ${lib.labelOf('lower', state.lower)}・${lib.labelOf('motion', state.motion)}${opText}`;
   setStage('loading');
   video.src = url;
   video.muted = true;

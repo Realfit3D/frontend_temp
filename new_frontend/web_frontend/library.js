@@ -8,10 +8,14 @@
  *   const lib = await Library.load('library/');
  *   lib.genders(sel) / lib.heights(sel) / lib.weights(sel)
  *   lib.uppers(sel)  / lib.lowers(sel)  / lib.motions(sel)   → [{ id, label, disabled, ... }]
+ *   lib.opacities(sel)                                        → [{ id, value, label, disabled }]（沒有透明影片時是空陣列）
  *   lib.videoUrl(sel)                                         → 影片網址或 null
  *   lib.normalize(sel)                                        → 清掉目前已不可選的欄位
  *
- * sel = { gender, height, weight, upper, lower, motion }  （沒選的欄位是 null 或 ''）
+ * sel = { gender, height, weight, upper, lower, motion, opacity }  （沒選的欄位是 null 或 ''）
+ *   opacity 是不透明度的字串（例如 '0.5'）；沒選或 null 一律當 1（不透明）。
+ *   只採用 opacity_mode 為 v3 的透明影片；direct / optical_depth 是替代做法，不給使用者選。
+ *   衣服、動作、身形的選項只由「不透明影片」決定，不受透明度影響；透明度的選項則要看其他欄位都選好後有沒有影片。
  *   height / weight 是「區間 id」（例如 '150-160'），影片實際用的是該區間的 value（中間值，例如 155）。
  *
  * 一個選項 disabled = 在「它所依賴的、已經選好的欄位」限制下，沒有任何一支影片符合（依賴關係見 DEPENDS_ON）。
@@ -44,18 +48,25 @@
         if (slot === 'upper') upper = g; else if (slot === 'lower') lower = g;
       });
       if (!upper || !lower) return;                      // 不是「一件上身＋一件下身」就略過
-      videos.push({ url: base + v.path, gender: v.gender, height: v.height, weight: v.weight, motion: v.motion, upper, lower });
+      const opacity = v.opacity == null ? 1 : Number(v.opacity);   // 舊影片沒有這個欄位 = 不透明
+      const mode = v.opacity_mode || 'direct';
+      if (!(opacity >= 1) && mode !== 'v3') return;      // 透明影片只採用 v3
+      videos.push({ url: base + v.path, gender: v.gender, height: v.height, weight: v.weight, motion: v.motion, upper, lower,
+                    opacity, mode, targets: v.opacity_garments || [] });
     });
 
-    const heightRanges = rangesFrom(catalog.heights, videos.map((v) => v.height), 'cm');
-    const weightRanges = rangesFrom(catalog.weights, videos.map((v) => v.weight), 'kg');
+    const opaqueVideos = videos.filter((v) => v.opacity >= 1);       // 其他選項只由不透明影片決定
+    const heightRanges = rangesFrom(catalog.heights, opaqueVideos.map((v) => v.height), 'cm');
+    const weightRanges = rangesFrom(catalog.weights, opaqueVideos.map((v) => v.weight), 'kg');
     const valueOf = (ranges, id) => { const r = ranges.find((x) => x.id === String(id)); return r ? r.value : undefined; };
 
     // ---- 篩選：sel 裡有填的欄位都要符合（ignore 指定的欄位不參與篩選）----
     function matching(sel, ignore) {
       const hv = sel.height ? valueOf(heightRanges, sel.height) : undefined;
       const wv = sel.weight ? valueOf(weightRanges, sel.weight) : undefined;
+      const ov = sel.opacity ? Number(sel.opacity) : 1;     // 沒選透明度 = 不透明
       return videos.filter((v) =>
+        (ignore === 'opacity' || v.opacity === ov) &&
         (ignore === 'gender' || !sel.gender || v.gender === sel.gender) &&
         (ignore === 'height' || !sel.height || v.height === hv) &&
         (ignore === 'weight' || !sel.weight || v.weight === wv) &&
@@ -74,7 +85,8 @@
       weight: ['gender', 'height'],
       upper: ['gender', 'height', 'weight', 'lower'],
       lower: ['gender', 'height', 'weight', 'upper'],
-      motion: ['gender', 'height', 'weight', 'upper', 'lower']
+      motion: ['gender', 'height', 'weight', 'upper', 'lower'],
+      opacity: ['gender', 'height', 'weight', 'upper', 'lower', 'motion']
     };
     const has = (sel, field, pred) => {
       const scoped = {};
@@ -84,7 +96,7 @@
 
     function garmentItems(slot, field, sel) {
       const ids = Object.keys(garments).filter((g) => garments[g].slot === slot);
-      const used = new Set(videos.map((v) => v[field]));
+      const used = new Set(opaqueVideos.map((v) => v[field]));
       return ids.filter((g) => used.has(g)).map((g) => ({
         id: g, label: garments[g].label || g, thumb: base + 'thumbnails/' + g + '.png',
         disabled: !has(sel, field, (v) => v[field] === g)
@@ -98,29 +110,45 @@
         return GENDERS.map((g) => ({ id: g.id, label: g.label, disabled: !has(sel, 'gender', (v) => v.gender === g.id) }));
       },
       heights(sel) {
-        const used = new Set(videos.map((v) => v.height));
+        const used = new Set(opaqueVideos.map((v) => v.height));
         return heightRanges.filter((r) => used.has(r.value)).map((r) => ({
           id: r.id, label: r.label, disabled: !has(sel, 'height', (v) => v.height === r.value) }));
       },
       weights(sel) {
-        const used = new Set(videos.map((v) => v.weight));
+        const used = new Set(opaqueVideos.map((v) => v.weight));
         return weightRanges.filter((r) => used.has(r.value)).map((r) => ({
           id: r.id, label: r.label, disabled: !has(sel, 'weight', (v) => v.weight === r.value) }));
       },
       uppers(sel) { return garmentItems('upper', 'upper', sel); },
       lowers(sel) { return garmentItems('lower', 'lower', sel); },
       motions(sel) {
-        const used = new Set(videos.map((v) => v.motion));
+        const used = new Set(opaqueVideos.map((v) => v.motion));
         const ids = Object.keys(motionsCat).filter((m) => used.has(m));
         [...used].forEach((m) => { if (!ids.includes(m)) ids.push(m); });   // catalog 沒列的動作也要能用（顯示代號）
         return ids.map((m) => ({
           id: m, label: (motionsCat[m] && motionsCat[m].label) || m, disabled: !has(sel, 'motion', (v) => v.motion === m) }));
       },
 
+      /** 不透明度的刻度（由大到小，1 = 不透明）。沒有任何透明影片時回傳空陣列，畫面就不顯示拉桿。 */
+      opacities(sel) {
+        const values = [...new Set(videos.map((v) => v.opacity))];
+        if (!values.some((x) => x < 1)) return [];
+        const fromCatalog = (catalog.opacities || []);
+        return values.sort((a, b) => b - a).map((val) => {
+          const c = fromCatalog.find((x) => Number(x.value) === val);
+          return {
+            id: String(val), value: val,
+            label: (c && c.label) || (Math.round(val * 100) + '%'),
+            disabled: !has(sel, 'opacity', (v) => v.opacity === val)
+          };
+        });
+      },
+
       labelOf(kind, id) {
         const list = { height: heightRanges, weight: weightRanges }[kind];
         if (list) { const r = list.find((x) => x.id === String(id)); return r ? r.label : String(id); }
         if (kind === 'gender') { const g = GENDERS.find((x) => x.id === id); return g ? g.label : String(id); }
+        if (kind === 'opacity') return Math.round(Number(id) * 100) + '%';
         if (kind === 'motion') return (motionsCat[id] && motionsCat[id].label) || String(id);
         return (garments[id] && garments[id].label) || String(id);
       },
@@ -129,7 +157,9 @@
       videoUrl(sel) {
         if (!(sel.gender && sel.height && sel.weight && sel.upper && sel.lower && sel.motion)) return null;
         const m = matching(sel);
-        return m.length ? m[0].url : null;
+        if (!m.length) return null;
+        m.sort((a, b) => (a.mode === 'direct' ? 0 : 1) - (b.mode === 'direct' ? 0 : 1) || a.targets.length - b.targets.length);
+        return m[0].url;
       },
 
       /** 清掉已經不可選的欄位（回傳新物件，不改原本的）。
@@ -137,8 +167,8 @@
        *  每一項只對照「優先順序比它高、而且已確認有效」的欄位，所以衝突時留下先選的、清掉後面的。 */
       normalize(sel) {
         const order = [['gender', 'genders'], ['height', 'heights'], ['weight', 'weights'],
-                       ['upper', 'uppers'], ['lower', 'lowers'], ['motion', 'motions']];
-        const out = { gender: null, height: null, weight: null, upper: null, lower: null, motion: null };
+                       ['upper', 'uppers'], ['lower', 'lowers'], ['motion', 'motions'], ['opacity', 'opacities']];
+        const out = { gender: null, height: null, weight: null, upper: null, lower: null, motion: null, opacity: null };
         order.forEach(([k, list]) => {
           if (!sel[k]) return;
           const item = lib[list](out).find((x) => x.id === sel[k]);
