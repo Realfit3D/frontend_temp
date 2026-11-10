@@ -91,5 +91,12 @@
       "label": "走路-快速",
       "file": "CMU/02/02_02_stageii.npz"
     }
-  }
+  },
+  "fit_rules": [
+    {
+      "garment": "(衣服 id，例如 Actor07_lower)",
+      "reason": "褲長偏長、版型偏鬆",
+      "bodies": [ {"gender": "female", "height": 155}, {"gender": "female", "height": 165, "weight": 45} ]
+    }
+  ]
 }

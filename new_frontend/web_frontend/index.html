@@ -77,6 +77,7 @@ button:focus-visible, select:focus-visible { outline: 3px solid var(--accent); o
 .card:disabled { cursor: default; }
 .card:disabled .thumb { opacity: .35; border: 2px dashed #D0D0CC; }
 .card:disabled .name { color: var(--disabled); }
+.card .tag { display: block; margin-top: 1px; font-size: 10px; line-height: 14px; color: #B4532A; white-space: normal; }
 
 /* ---------- 第一頁：身形 ---------- */
 #body-page { min-height: 100dvh; display: flex; flex-direction: column; }
@@ -496,9 +497,12 @@ function renderGarments(box, items, slot) {
   items.forEach((g) => {
     const img = el('img', { src: g.thumb, alt: '' });
     img.addEventListener('error', () => { img.style.visibility = 'hidden'; });
+    const kids = [el('div', { class: 'thumb' }, [img]), el('div', { class: 'name', text: g.label })];
+    if (g.unfit) kids.push(el('span', { class: 'tag', text: '不適合，' + g.reason }));   // 身形不適合：和「沒有影片」的灰色區分
     const btn = el('button', {
       type: 'button', class: 'card', 'aria-pressed': String(state[slot] === g.id), onclick: () => pickGarment(slot, g.id)
-    }, [el('div', { class: 'thumb' }, [img]), el('div', { class: 'name', text: g.label })]);
+    }, kids);
+    if (g.unfit) { btn.title = g.reason; btn.setAttribute('aria-label', g.label + '，此身形不適合：' + g.reason); }
     if (g.disabled) btn.disabled = true;
     box.appendChild(btn);
   });

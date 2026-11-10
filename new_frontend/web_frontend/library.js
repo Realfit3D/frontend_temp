@@ -39,8 +39,25 @@
     const garments = catalog.garments || {};
     const motionsCat = catalog.motions || {};
 
+    // ---- 「身形不適合此衣服」規則（catalog.fit_rules）----
+    //   [{ garment, reason, bodies: [{ gender, height, weight? }] }]；height / weight 是區間的中間值（例如 155、45），
+    //   weight 省略 = 該身高的所有體重。符合規則的影片不會出現在選項裡，衣服卡片會改顯示原因。
+    const fitRules = Array.isArray(catalog.fit_rules) ? catalog.fit_rules : [];
+    function unfitReason(garment, gender, height, weight) {
+      for (const r of fitRules) {
+        if (r.garment !== garment) continue;
+        const hit = (r.bodies || []).some((b) =>
+          (b.gender == null || b.gender === gender) &&
+          (b.height == null || b.height === height) &&
+          (b.weight == null || b.weight === weight));
+        if (hit) return r.reason || '此身形不適合';
+      }
+      return null;
+    }
+
     // ---- 把 manifest 的每支影片整理成 { url, gender, height, weight, motion, upper, lower } ----
     const videos = [];
+    const allVideos = [];
     (manifest.videos || []).forEach((v) => {
       let upper = null, lower = null;
       (v.garments || []).forEach((g, i) => {
@@ -48,6 +65,8 @@
         if (slot === 'upper') upper = g; else if (slot === 'lower') lower = g;
       });
       if (!upper || !lower) return;                      // 不是「一件上身＋一件下身」就略過
+      allVideos.push({ upper, lower });                  // 過濾前出現過的衣服（讓被規則排除的衣服仍列在畫面上）
+      if (unfitReason(upper, v.gender, v.height, v.weight) || unfitReason(lower, v.gender, v.height, v.weight)) return;  // 身形不適合
       const opacity = v.opacity == null ? 1 : Number(v.opacity);   // 舊影片沒有這個欄位 = 不透明
       const mode = v.opacity_mode || 'direct';
       if (!(opacity >= 1) && mode !== 'v3') return;      // 透明影片只採用 v3
@@ -97,10 +116,19 @@
     function garmentItems(slot, field, sel) {
       const ids = Object.keys(garments).filter((g) => garments[g].slot === slot);
       const used = new Set(opaqueVideos.map((v) => v[field]));
-      return ids.filter((g) => used.has(g)).map((g) => ({
-        id: g, label: garments[g].label || g, thumb: base + 'thumbnails/' + g + '.png',
-        disabled: !has(sel, field, (v) => v[field] === g)
-      }));
+      const bodyKnown = sel.gender && sel.height && sel.weight;
+      const hv = bodyKnown ? valueOf(heightRanges, sel.height) : undefined;
+      const wv = bodyKnown ? valueOf(weightRanges, sel.weight) : undefined;
+      // 衣服只要對「某些身形」有影片就會列出；若這個身形被規則排除，就標成 unfit 並附原因（不可選）。
+      const everUsed = new Set(allVideos.map((v) => v[field]));
+      return ids.filter((g) => used.has(g) || everUsed.has(g)).map((g) => {
+        const reason = bodyKnown ? unfitReason(g, sel.gender, hv, wv) : null;
+        return {
+          id: g, label: garments[g].label || g, thumb: base + 'thumbnails/' + g + '.png',
+          disabled: !!reason || !has(sel, field, (v) => v[field] === g),
+          unfit: !!reason, reason: reason || ''
+        };
+      });
     }
 
     const lib = {
