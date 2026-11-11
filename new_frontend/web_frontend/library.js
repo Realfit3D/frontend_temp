@@ -70,7 +70,8 @@
       const opacity = v.opacity == null ? 1 : Number(v.opacity);   // 舊影片沒有這個欄位 = 不透明
       const mode = v.opacity_mode || 'direct';
       if (!(opacity >= 1) && mode !== 'v3') return;      // 透明影片只採用 v3
-      videos.push({ url: base + v.path, gender: v.gender, height: v.height, weight: v.weight, motion: v.motion, upper, lower,
+      // make_site.py 會在上線用的 manifest 裡給每支影片一個內容雜湊 v；網址加上 ?v= 後，換過的影片不會被手機的舊快取擋住
+      videos.push({ url: base + v.path + (v.v ? '?v=' + encodeURIComponent(v.v) : ''), gender: v.gender, height: v.height, weight: v.weight, motion: v.motion, upper, lower,
                     opacity, mode, targets: v.opacity_garments || [] });
     });
 
